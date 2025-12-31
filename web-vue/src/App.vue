@@ -1,15 +1,28 @@
-<!-- 根组件 -->
 <template>
   <div id="app">
-    <!-- 应用内容 -->
-    <router-view />
+    <MonitorView />
   </div>
 </template>
 
 <script setup lang="ts">
-// 应用逻辑
+import MonitorView from './views/Monitor.vue'
 </script>
 
 <style>
-/* 全局样式 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f5f7fa;
+  color: #333;
+}
+
+#app {
+  width: 100%;
+  min-height: 100vh;
+}
 </style>
