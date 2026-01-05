@@ -7,7 +7,14 @@ Test/
 dist/
 build/
 
+#模型训练
+Action_type_recognition/
 
+#模型测试结果
+runs/
+
+#监测截图
+debug_evidence/
 
 # Environment files
 .env.local

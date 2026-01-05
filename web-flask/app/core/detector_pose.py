@@ -5,12 +5,10 @@ from ultralytics import YOLO
 
 class PoseDetector:
     def __init__(self):
-        # 加载模型
         self.model = YOLO('yolov8n-pose.pt') 
         self.conf_threshold = 0.35
 
     def calculate_angle(self, a, b, c):
-        """计算手臂弯曲角度 (肩-肘-腕)"""
         ba = np.array([a[0] - b[0], a[1] - b[1]])
         bc = np.array([c[0] - b[0], c[1] - b[1]])
         cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
@@ -18,93 +16,77 @@ class PoseDetector:
         return np.degrees(angle)
 
     def predict_data(self, frame):
-        # 保持低分辨率推理，确保 CPU 不卡顿
-        results = self.model(frame, verbose=False, conf=self.conf_threshold, imgsz=192)
+        # 保持 256 分辨率
+        results = self.model(frame, verbose=False, conf=self.conf_threshold, imgsz=256)
         detections = []
         
         for result in results:
             if result.keypoints is None: continue
             
-            # 获取所有关键点 [N, 17, 3] -> (x, y, conf)
             keypoints = result.keypoints.data.cpu().numpy()
             boxes = result.boxes.xyxy.cpu().numpy()
             
             for i, kps in enumerate(keypoints):
-                # ====================================================
-                # 1. 定义关键点
-                # ====================================================
-                # 面部关键点 (鼻子0, 左眼1, 右眼2)
                 nose = kps[0]
-                eye_l = kps[1]
-                eye_r = kps[2]
+                wrist_l, wrist_r = kps[9], kps[10]
+                elbow_l, elbow_r = kps[7], kps[8]
+                shoulder_l, shoulder_r = kps[5], kps[6]
                 
-                # 手臂关键点
-                wrist_l = kps[9]   # 左腕
-                elbow_l = kps[7]   # 左肘
-                shoulder_l = kps[5] # 左肩
-                
-                wrist_r = kps[10]  # 右腕
-                elbow_r = kps[8]   # 右肘
-                shoulder_r = kps[6] # 右肩
-
-                # ====================================================
-                # 2. 基础数据准备
-                # ====================================================
-                # 获取检测框高度，用于自适应阈值 (不同距离的人阈值不同)
                 box = boxes[i]
                 box_h = box[3] - box[1]
                 
-                # 判定阈值：头部大小的大约 1.2 倍范围 (非常灵敏)
-                # 0.3 * 身高 ≈ 头的大小
-                face_proximity_threshold = box_h * 0.30  
+                is_suspicious = False
+                suspicious_hand = None 
+
+                # ====================================================
+                # ⚖️ 参数回调：平衡模式
+                # ====================================================
+                # 1. 距离阈值：0.30 (允许手稍微离嘴巴有一定距离)
+                face_proximity_threshold = box_h * 0.30
                 
-                is_smoking = False
+                # 2. 手腕置信度：0.60 (过滤衣领，但保留真手)
+                WRIST_CONF_THRESH = 0.60
+                
+                # 3. 高度防线：0.20 (允许稍微低头)
+                height_limit = nose[1] + (box_h * 0.20) 
 
-                # ====================================================
-                # 3. 左手判定逻辑
-                # ====================================================
-                # 只有当手腕置信度 > 0.3 时才计算
-                if wrist_l[2] > 0.3:
-                    # A. 计算手腕到面部各点的距离，取最小值
-                    dists = []
-                    if nose[2] > 0.3:  dists.append(math.hypot(wrist_l[0]-nose[0], wrist_l[1]-nose[1]))
-                    if eye_l[2] > 0.3: dists.append(math.hypot(wrist_l[0]-eye_l[0], wrist_l[1]-eye_l[1]))
-                    # 如果检测不到面部，就无法判断
-                    if dists:
-                        min_dist_to_face = min(dists)
-                        
-                        # B. 计算手臂弯曲角度
-                        arm_angle = 180 # 默认为直
-                        if elbow_l[2] > 0.3 and shoulder_l[2] > 0.3:
-                            arm_angle = self.calculate_angle(shoulder_l[:2], elbow_l[:2], wrist_l[:2])
+                # --- 左手检测 ---
+                if wrist_l[2] > WRIST_CONF_THRESH and nose[2] > 0.5:
+                    if wrist_l[1] < height_limit: # 高度检查
+                        dist = math.hypot(wrist_l[0]-nose[0], wrist_l[1]-nose[1])
+                        if dist < face_proximity_threshold:
+                            arm_angle = 180
+                            if elbow_l[2] > 0.3 and shoulder_l[2] > 0.3:
+                                arm_angle = self.calculate_angle(shoulder_l[:2], elbow_l[:2], wrist_l[:2])
+                            
+                            if arm_angle < 140: # 角度放宽到 140
+                                is_suspicious = True
+                                suspicious_hand = "left"
 
-                        # C. 综合判定: 
-                        # 条件1: 手离脸很近 (距离 < 阈值)
-                        # 条件2: 手臂是弯曲的 (角度 < 130度，防止直臂误判)
-                        if min_dist_to_face < face_proximity_threshold and arm_angle < 130:
-                            is_smoking = True
+                # --- 右手检测 ---
+                if not is_suspicious and wrist_r[2] > WRIST_CONF_THRESH and nose[2] > 0.5:
+                    if wrist_r[1] < height_limit:
+                        dist = math.hypot(wrist_r[0]-nose[0], wrist_r[1]-nose[1])
+                        if dist < face_proximity_threshold:
+                            arm_angle = 180
+                            if elbow_r[2] > 0.3 and shoulder_r[2] > 0.3:
+                                arm_angle = self.calculate_angle(shoulder_r[:2], elbow_r[:2], wrist_r[:2])
+                            
+                            if arm_angle < 140:
+                                is_suspicious = True
+                                suspicious_hand = "right"
 
-                # ====================================================
-                # 4. 右手判定逻辑 (同理)
-                # ====================================================
-                if not is_smoking and wrist_r[2] > 0.3:
-                    dists = []
-                    if nose[2] > 0.3:  dists.append(math.hypot(wrist_r[0]-nose[0], wrist_r[1]-nose[1]))
-                    if eye_r[2] > 0.3: dists.append(math.hypot(wrist_r[0]-eye_r[0], wrist_r[1]-eye_r[1]))
-                    
-                    if dists:
-                        min_dist_to_face = min(dists)
-                        
-                        arm_angle = 180
-                        if elbow_r[2] > 0.3 and shoulder_r[2] > 0.3:
-                            arm_angle = self.calculate_angle(shoulder_r[:2], elbow_r[:2], wrist_r[:2])
-
-                        if min_dist_to_face < face_proximity_threshold and arm_angle < 130:
-                            is_smoking = True
-
+                wrist_coord = wrist_l[:2] if suspicious_hand == "left" else wrist_r[:2]
+                
                 detections.append({
                     "box": [int(b) for b in box],
-                    "is_smoking": is_smoking
+                    "is_suspicious": is_suspicious,
+                    "nose_coord": nose[:2],
+                    "wrist_coord": wrist_coord,
+                    "final_smoking": False,
+                    "debug_kps": {
+                        "wrist_l": wrist_l, "wrist_r": wrist_r, "nose": nose, "limit": height_limit
+                    }
                 })
         
         return detections
@@ -112,29 +94,33 @@ class PoseDetector:
     def draw_on_frame(self, frame, detections, force_alarm=False):
         annotated_frame = frame.copy()
         
-        # 1. 报警边框特效
         if force_alarm:
             h, w = annotated_frame.shape[:2]
             cv2.rectangle(annotated_frame, (0, 0), (w, h), (0, 0, 255), 10)
             cv2.putText(annotated_frame, "SMOKING DETECTED", (20, 50), 
                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
 
-        # 2. 画人
         if detections:
             for det in detections:
                 box = det["box"]
-                is_red = det["is_smoking"] or force_alarm
                 
-                color = (0, 0, 255) if is_red else (0, 255, 0)
-                # 红框粗一点，绿框细一点
-                thickness = 3 if is_red else 1 
+                if det["final_smoking"] or force_alarm:
+                    color = (0, 0, 255) 
+                    text = "Smoking"
+                elif det["is_suspicious"]:
+                    color = (0, 255, 255) 
+                    text = "Checking..."
+                else:
+                    color = (0, 255, 0) 
+                    text = "Normal"
+
+                cv2.rectangle(annotated_frame, (box[0], box[1]), (box[2], box[3]), color, 2)
+                cv2.putText(annotated_frame, text, (box[0], box[1]-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                 
-                cv2.rectangle(annotated_frame, (box[0], box[1]), (box[2], box[3]), color, thickness)
-                
-                if is_red:
-                    # 在头顶显示红色标签
-                    cv2.rectangle(annotated_frame, (box[0], box[1]-30), (box[0]+120, box[1]), color, -1)
-                    cv2.putText(annotated_frame, "Smoking", (box[0]+5, box[1]-8), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                # 调试辅助线 (可保留观察)
+                kps = det["debug_kps"]
+                limit_y = int(kps["limit"])
+                cv2.line(annotated_frame, (box[0], limit_y), (box[2], limit_y), (0, 255, 255), 1)
                            
         return annotated_frame
