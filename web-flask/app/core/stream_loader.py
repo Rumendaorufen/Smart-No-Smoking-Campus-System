@@ -26,8 +26,6 @@ class StreamLoader:
         self.app = app 
         self.lock = threading.Lock()
         self.detector = SmokingDetector()
-        
-        # 初始化录制器
         self.recorder = EvidenceRecorder(save_dir="app/static/evidence", fps=25, pre_record_sec=2)
         
         self.running = False
@@ -36,16 +34,18 @@ class StreamLoader:
         self.output_frame = None  
         
         self.smoke_events = defaultdict(SmokeEvent)
-        self.alarm_threshold_frames = 15 # 建议调高到 15 帧防抖
+        self.alarm_threshold_frames = 15
         self.lost_timeout = 2.0
         
         self.last_read_time = time.time()
         
-        # 记录 "Person ID" 的最后报警时间
-        # 格式: { person_id_or_unknown_key: last_alarm_time }
+        # 冷却记录 { id: time }
         self.smoker_records = {} 
-        
-        self.alarm_cooldown = 300.0  # 冷却时间 5分钟
+        self.alarm_cooldown = 300.0 
+
+        # 🛑 新增：重连信号旗
+        # Watchdog 只能改这个值，不能动 self.cap
+        self.reconnect_requested = False
 
     def start(self) -> bool:
         self.running = True
@@ -59,11 +59,17 @@ class StreamLoader:
         if self.cap: self.cap.release()
 
     def _connect(self):
+        """只在 _reader_thread 内部调用，确保线程安全"""
         try:
-            if self.cap: self.cap.release()
+            if self.cap: 
+                self.cap.release() # 先释放旧的
+            
+            # 配置环境变量放在这里只是双重保险，建议在 run.py 全局设置
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|buffer_size;1024"
+            
             self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             if self.cap.isOpened():
+                # 关键：禁用内部多线程，防止 fctx->async_lock 错误
                 self.cap.set(cv2.CAP_PROP_N_THREADS, 1)
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 logger.info(f"✅ Cam {self.camera_id} Connected.")
@@ -73,38 +79,67 @@ class StreamLoader:
         return False
 
     def _reader_thread(self):
+        """唯一的读取线程，也是唯一的连接管理者"""
         logger.info(f"Cam {self.camera_id} Reader Started")
+        
+        # 第一次连接
         if not self._connect():
             logger.warning(f"Cam {self.camera_id} init failed.")
 
         while self.running:
             try:
+                # 🛑 检查是否收到看门狗的重连指令
+                if self.reconnect_requested:
+                    logger.warning(f"🔄 Cam {self.camera_id} Reconnecting by request...")
+                    self._connect()
+                    self.reconnect_requested = False # 复位信号
+                    self.last_read_time = time.time() # 重置时间防止死循环
+
                 if not self.cap or not self.cap.isOpened():
                     time.sleep(1)
+                    # 尝试自动重连
+                    self._connect()
                     continue
-                if self.cap.grab():
+                
+                # 读取帧
+                grabbed = self.cap.grab()
+                if grabbed:
                     ret, frame = self.cap.retrieve()
                     if ret:
                         with self.lock:
                             self.latest_frame = frame
-                            self.last_read_time = time.time()
+                            self.last_read_time = time.time() # 喂狗
                     else:
                         time.sleep(0.01)
                 else:
+                    # 没抓到帧，休息一下
                     time.sleep(0.01)
+            
             except Exception as e:
                 logger.error(f"Reader error: {e}")
                 time.sleep(1)
 
     def _watchdog_thread(self):
+        """看门狗：只负责发信号，不动手"""
         while self.running:
-            if time.time() - self.last_read_time > 10.0: # 放宽一点到 10秒
-                logger.warning(f"🚨 Cam {self.camera_id} Frozen! Restarting...")
-                self._connect()
-                self.last_read_time = time.time()
+            # 如果超时 (比如 10秒)
+            if time.time() - self.last_read_time > 10.0:
+                logger.warning(f"🚨 Cam {self.camera_id} Frozen! Signaling restart...")
+                
+                # 🛑 关键修改：只举旗，不重连
+                # 让 reader 线程在下一轮循环自己去连，避免线程冲突
+                self.reconnect_requested = True
+                
+                # 临时更新时间，防止看门狗一秒钟发一次信号，给 reader 一点时间去处理
+                self.last_read_time = time.time() 
+            
             time.sleep(2)
 
+    # ... ( _processor_thread, _match_person_id, _run_ai_logic, _save_alarm_to_db, _draw_ui, get_latest_frame 保持不变 )
+    # 为节省篇幅，这里省略中间未修改的代码，请保留你上一次修改的逻辑
+    
     def _processor_thread(self):
+        # ... (保持原样) ...
         while self.running:
             frame_to_process = None
             with self.lock:
@@ -126,106 +161,76 @@ class StreamLoader:
             self.output_frame = final_view
             time.sleep(0.03)
 
-    # 🛑 修复：将匹配函数放回类内部，并增加距离阈值判断
     def _match_person_id(self, cigarette_box, person_detections):
+        # ... (保持原样) ...
         c_x1, c_y1, c_x2, c_y2 = cigarette_box
         c_center_x = (c_x1 + c_x2) / 2
         c_center_y = (c_y1 + c_y2) / 2
-        
         best_match_id = None
-        min_dist = float('inf')
-
         for p in person_detections:
             p_box = p['box']
             p_id = p['id']
-            
-            # 宽松判定：扩展框
             padding = 50
             if (p_box[0] - padding < c_center_x < p_box[2] + padding) and \
                (p_box[1] - padding < c_center_y < p_box[3] + padding):
                 return p_id
-        
         return None
 
     def _run_ai_logic(self, frame):
+        # ... (保持原样，含冷却逻辑) ...
         current_time = time.time()
         detections = self.detector.detect(frame)
-        
         persons = [d for d in detections if d['label'] == 'person']
-        cigarettes = [d for d in detections if d['label'] == 'cigarette'] # 假设你的标签是 cigarette
+        cigarettes = [d for d in detections if d['label'] == 'cigarette']
         
         for cig in cigarettes:
             cid = cig['id']
             conf = cig['conf']
             cbox = cig['box']
-            
             event = self.smoke_events[cid]
             event.last_seen_time = current_time
             event.frame_count += 1
             
             if event.frame_count >= self.alarm_threshold_frames:
                 cig['is_alarm'] = True
-                
                 if not event.is_confirmed:
-                    # 1. 找主人
                     owner_id = self._match_person_id(cbox, persons)
-                    
-                    # 2. 确定冷却键 (如果有主人用ID，没主人用 "unknown")
-                    # 这样可以防止 "Unknown Owner" 疯狂重复报警
                     cooldown_key = owner_id if owner_id is not None else "unknown_smoker"
-                    
-                    # 3. 检查冷却
                     last_time = self.smoker_records.get(cooldown_key, 0)
                     
                     if current_time - last_time > self.alarm_cooldown:
-                        # 🔥 触发报警
-                        self.smoker_records[cooldown_key] = current_time # 更新冷却时间
+                        self.smoker_records[cooldown_key] = current_time
                         event.is_confirmed = True
                         
                         log_msg = f"🔥 ALARM: Person {owner_id}" if owner_id else "🔥 ALARM: Unknown Owner"
                         logger.warning(f"{log_msg} (Cig {cid})")
                         
-                        # 录制与入库
                         file_prefix = f"alarm_p{owner_id}" if owner_id else "alarm_unknown"
                         filename = f"{file_prefix}_{int(time.time())}.mp4"
                         video_path = self.recorder.start_recording(filename, post_record_sec=5)
-                        
                         img_name = f"{file_prefix}_{int(time.time())}.jpg"
                         roi_path = self.recorder.save_snapshot(frame, img_name)
-                        
-                        threading.Thread(target=self._save_alarm_to_db, 
-                                         args=(conf, video_path, roi_path)).start()
+                        threading.Thread(target=self._save_alarm_to_db, args=(conf, video_path, roi_path)).start()
                     else:
-                        # ❄️ 冷却中，忽略
-                        event.is_confirmed = True # 标记为已处理，防止下一帧重复检查冷却
+                        event.is_confirmed = True
                         logger.info(f"❄️ Cooldown: {cooldown_key} ignored.")
             else:
                 cig['is_alarm'] = False
 
-        expired_ids = [tid for tid, evt in self.smoke_events.items() 
-                      if current_time - evt.last_seen_time > self.lost_timeout]
-        for tid in expired_ids:
-            del self.smoke_events[tid]
-            
+        expired_ids = [tid for tid, evt in self.smoke_events.items() if current_time - evt.last_seen_time > self.lost_timeout]
+        for tid in expired_ids: del self.smoke_events[tid]
         return detections
 
     def _save_alarm_to_db(self, confidence, video_full_path, roi_rel_path):
+        # ... (保持原样) ...
         try:
             if not self.app: return
-            
             if video_full_path:
                 video_rel_path = "static/evidence/" + os.path.basename(video_full_path)
             else:
                 video_rel_path = ""
-
             with self.app.app_context():
-                new_alarm = Alarms(
-                    camera_id=self.camera_id,
-                    type='SMOKING',
-                    confidence=confidence,
-                    video_url=video_rel_path,
-                    roi_url=roi_rel_path
-                )
+                new_alarm = Alarms(camera_id=self.camera_id, type='SMOKING', confidence=confidence, video_url=video_rel_path, roi_url=roi_rel_path)
                 db.session.add(new_alarm)
                 db.session.commit()
                 logger.info(f"✅ Alarm saved to DB: ID {new_alarm.id}")
@@ -233,15 +238,14 @@ class StreamLoader:
             logger.error(f"❌ DB Save Error: {e}")
 
     def _draw_ui(self, frame, detections):
+        # ... (保持原样) ...
         h, w = frame.shape[:2]
         is_global_alarm = False
         persons = [d for d in detections if d['label'] == 'person']
-
         for det in detections:
             box = det['box']
             label = det['label']
             tid = det['id']
-            
             if label == 'person':
                 cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (255, 0, 0), 2)
                 cv2.putText(frame, f"ID:{tid}", (box[0], box[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
@@ -254,17 +258,16 @@ class StreamLoader:
                     is_global_alarm = True
                 else:
                     cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 255, 255), 2)
-
         if is_global_alarm:
             cv2.rectangle(frame, (0, 0), (w, h), (0, 0, 255), 8)
-            
         return frame
-        
+    
     def get_latest_frame(self):
         if self.output_frame is not None: return self.output_frame
         if self.latest_frame is not None: return cv2.resize(self.latest_frame, (640, 360))
         return None
 
+# (StreamManager 类保持不变)
 class StreamManager:
     def __init__(self, buffer_size=60):
         self.stream_loaders = {}
