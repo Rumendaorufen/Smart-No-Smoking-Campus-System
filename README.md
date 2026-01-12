@@ -54,43 +54,53 @@ Smart No-Smoking Campus System/
 ├── web-flask/                   # 后端工程
 │   ├── app/
 │   │   ├── api/                 # API 蓝图
+│   │   │   ├── alert.py         # 报警管理
 │   │   │   ├── auth.py          # 登录认证
-│   │   │   ├── monitor.py       # 实时流与设备管理
-│   │   │   └── alert.py         # 报警管理
+│   │   │   └── monitor.py       # 实时流与设备管理
 │   │   ├── core/                # 核心算法与工具
-│   │   │   ├── stream_loader.py # 视频流加载与环形缓存
-│   │   │   ├── detector_pose.py # YOLO-Pose 封装
-│   │   │   ├── detector_cls.py  # CNN 分类器封装
-│   │   │   └── recorder.py      # 证据视频合成
+│   │   │   ├── best.pt          # 最佳模型权重
+│   │   │   ├── detector.py      # 统一检测器封装
+│   │   │   ├── detector_cls.py  # CNN 分类器封装 (历史版本)
+│   │   │   ├── detector_pose.py # YOLO-Pose 封装 (历史版本)
+│   │   │   ├── recorder.py      # 证据视频合成
+│   │   │   └── stream_loader.py # 视频流加载与环形缓存
 │   │   ├── models/              # SQLAlchemy 模型
-│   │   └── sockets/             # WebSocket 事件处理
-│   ├── env/                     # 虚拟环境
-│   ├── static/                  # 静态资源
-│   │   ├── evidence/            # 报警视频 (.mp4)
-│   │   └── snapshots/           # 抓拍图片 (.jpg)
+│   │   │   ├── __init__.py
+│   │   │   ├── db_config.py     # 数据库配置
+│   │   │   └── devices.py       # 设备模型
+│   │   ├── sockets/             # WebSocket 事件处理
+│   │   │   └── events.py        # Socket 事件定义
+│   │   ├── __init__.py
+│   │   └── model.py             # 模型管理
 │   ├── config.py                # 配置文件
-│   └── run.py                   # 启动入口
+│   ├── run.py                   # 启动入口
+│   ├── yolov8n-pose.pt          # YOLOv8-Pose 模型权重
+│   └── yolov8n.pt               # YOLOv8 目标检测模型权重
 └── web-vue/                     # 前端工程
+    ├── .vscode/                 # VS Code 配置
+    │   └── extensions.json
+    ├── public/                  # 公共资源
+    │   └── vite.svg
     ├── src/
     │   ├── api/                 # Axios 接口层
-    │   │   ├── user.ts
-    │   │   ├── device.ts
-    │   │   └── alarm.ts
+    │   │   └── device.ts        # 设备管理 API
+    │   ├── assets/              # 静态资源
+    │   │   └── vue.svg
     │   ├── components/          # 公共组件
-    │   │   ├── VideoGrid.vue    # 监控宫格组件
-    │   │   └── AuditModal.vue   # 审核弹窗组件
-    │   ├── layout/              # 页面布局
-    │   ├── router/              # 路由配置
-    │   ├── store/               # Pinia 状态管理
-    │   │   ├── user.ts
-    │   │   └── socket.ts
-    │   ├── utils/               # 工具函数
+    │   │   └── HelloWorld.vue   # 示例组件
     │   ├── views/               # 页面视图
-    │   │   ├── Dashboard.vue    # 数据大屏
-    │   │   ├── Monitor.vue      # 实时监控墙
-    │   │   └── AlarmAudit.vue   # 报警审核
-    │   └── App.vue
+    │   │   └── Monitor.vue      # 实时监控墙
+    │   ├── App.vue              # 根组件
+    │   ├── main.ts              # 应用入口
+    │   └── style.css            # 全局样式
     ├── .env                     # 环境变量
+    ├── .gitignore               # Git 忽略文件
+    ├── index.html               # HTML 模板
+    ├── package.json             # 项目依赖
+    ├── package-lock.json        # 依赖锁定文件
+    ├── tsconfig.json            # TypeScript 配置
+    ├── tsconfig.app.json        # TypeScript 应用配置
+    ├── tsconfig.node.json       # TypeScript Node 配置
     └── vite.config.ts           # Vite 配置
 ```
 

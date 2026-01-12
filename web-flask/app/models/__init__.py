@@ -1,4 +1,24 @@
-# 将 devices.py 中的 Devices 类暴露给 app.models 包
-from .db_config import Base, engine, get_db
-from .devices import Devices
-# 如果以后有 from .alarms import Alarms 也可以加在这里
+from flask_sqlalchemy import SQLAlchemy
+
+# 1. 创建全局 db 对象
+db = SQLAlchemy()
+
+# 2. 初始化函数
+def init_db(app):
+    db.init_app(app)
+    
+    # 显式导入模型，防止 create_all 找不到表
+    from app.models.devices import Devices
+    from app.models.alarm import Alarms
+    
+    with app.app_context():
+        db.create_all()
+        print("✅ 数据库初始化完成")
+
+# 3. 导出模型，方便外部引用
+# (使用了 try-except 是为了防止循环导入时的报错，保持健壮性)
+try:
+    from app.models.devices import Devices
+    from app.models.alarm import Alarms
+except ImportError:
+    pass

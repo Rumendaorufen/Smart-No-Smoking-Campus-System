@@ -1,3 +1,4 @@
+#web-flask\app\core\detector.py
 import os
 import torch
 from ultralytics import YOLO

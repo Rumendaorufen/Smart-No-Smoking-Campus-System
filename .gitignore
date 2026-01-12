@@ -13,6 +13,8 @@ Action_type_recognition/
 #模型测试结果
 runs/
 
+static/
+
 #监测截图
 debug_evidence/
 

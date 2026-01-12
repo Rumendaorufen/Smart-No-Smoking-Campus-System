@@ -1,19 +1,19 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from app.models import db  # ✅ 关键：使用全局统一的 db 实例
 from sqlalchemy.sql import func
-from app.models.db_config import Base
 
-class Devices(Base):
+class Devices(db.Model):  # ✅ 关键：继承 db.Model，而不是 Base
     __tablename__ = 'devices'
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False)
-    rtsp_url = Column(String(500), nullable=False)
-    area_config = Column(Text, nullable=True)
-    status = Column(Integer, default=1) # 1在线 0离线
+    # 使用 db.Column 替代 Column
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String(100), nullable=False)
+    rtsp_url = db.Column(db.String(500), nullable=False)
+    area_config = db.Column(db.Text, nullable=True)
+    status = db.Column(db.Integer, default=1)  # 1在线 0离线
     
     # 时间字段
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = db.Column(db.DateTime, server_default=func.now())
+    updated_at = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
 
     def to_dict(self):
         return {

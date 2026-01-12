@@ -1,10 +1,16 @@
+#web-flask\app\core\stream_loader.py
 import cv2
 import time
 import threading
 import os
 import logging
+import uuid
 from collections import defaultdict
 from app.core.detector import SmokingDetector
+from app.core.recorder import EvidenceRecorder # 导入录制器
+# 导入 app 创建函数以便获取 context，或者直接从 run import app (如果结构允许)
+# 这里假设我们在 __init__.py 里已经初始化了 db，我们需要在线程里使用它
+from app.models import db, Alarms
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -17,11 +23,15 @@ class SmokeEvent:
         self.is_confirmed = False 
 
 class StreamLoader:
-    def __init__(self, camera_id: int, rtsp_url: str):
+    def __init__(self, camera_id: int, rtsp_url: str, app=None):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
+        self.app = app # 存起来
         self.lock = threading.Lock()
         self.detector = SmokingDetector()
+        
+        # ✅ 初始化录制器 (FPS=25, 预录2秒)
+        self.recorder = EvidenceRecorder(save_dir="app/static/evidence", fps=25, pre_record_sec=2)
         
         self.running = False
         self.cap = None
@@ -32,15 +42,12 @@ class StreamLoader:
         self.alarm_threshold_frames = 5
         self.lost_timeout = 2.0
         
-        # 🐶 看门狗时间戳
         self.last_read_time = time.time()
 
     def start(self) -> bool:
         self.running = True
-        # 启动线程
         threading.Thread(target=self._reader_thread, daemon=True).start()
         threading.Thread(target=self._processor_thread, daemon=True).start()
-        # 启动看门狗线程
         threading.Thread(target=self._watchdog_thread, daemon=True).start()
         return True
 
@@ -49,93 +56,78 @@ class StreamLoader:
         if self.cap: self.cap.release()
 
     def _connect(self):
-        """建立连接的独立方法"""
         try:
             if self.cap: self.cap.release()
-            
-            # 1. 强制使用 TCP 传输 (解决花屏和 UDP 丢包导致的解码错误)
-            # ⚠️ 注意：这行必须在 cv2.VideoCapture 之前设置
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|buffer_size;1024"
-            
-            # 2. 指定后端为 FFmpeg (Windows下有时候会默认跳到 DSHOW 或 MSMF，导致不稳定)
+            # 使用 Headless 兼容模式
             self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-            
             if self.cap.isOpened():
-                # 🛑 关键修复：禁用 FFmpeg 内部多线程
-                # 这能完美解决 "fctx->async_lock failed" 错误
-                # 0 表示自动，1 表示禁用多线程。虽然牺牲了一丢丢单帧解码速度，但换来了绝对的稳定。
-                self.cap.set(cv2.CAP_PROP_N_THREADS, 1)
-                
-                # 设置缓冲区大小为 1 (尽可能低延迟)
+                self.cap.set(cv2.CAP_PROP_N_THREADS, 1) # 单线程稳定模式
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                
-                logger.info(f"✅ Cam {self.camera_id} Connected (Threads=1).")
+                logger.info(f"✅ Cam {self.camera_id} Connected.")
                 return True
         except Exception as e:
             logger.error(f"Connection error: {e}")
         return False
 
     def _reader_thread(self):
-        """读取线程：只负责把最新帧读进来，越快越好"""
         logger.info(f"Cam {self.camera_id} Reader Started")
-        
-        # 初次连接
         if not self._connect():
-            logger.warning(f"Cam {self.camera_id} init failed, watchdog will handle it.")
+            logger.warning(f"Cam {self.camera_id} init failed.")
 
         while self.running:
             try:
                 if not self.cap or not self.cap.isOpened():
-                    time.sleep(1) # 等待重连
+                    time.sleep(1)
                     continue
                 
-                # grab() 是非阻塞的，比 retrieve() 快
                 if self.cap.grab():
                     ret, frame = self.cap.retrieve()
                     if ret:
                         with self.lock:
                             self.latest_frame = frame
-                            self.last_read_time = time.time() # 喂狗
+                            self.last_read_time = time.time()
                     else:
                         time.sleep(0.01)
                 else:
-                    # 如果抓不到帧，稍微休眠防止 CPU 100%
                     time.sleep(0.01)
             except Exception as e:
                 logger.error(f"Reader error: {e}")
                 time.sleep(1)
 
     def _watchdog_thread(self):
-        """🐶 看门狗：监控读取流是否卡死"""
-        logger.info(f"Cam {self.camera_id} Watchdog Started")
         while self.running:
-            # 如果超过 5 秒没有新帧，说明卡死了
             if time.time() - self.last_read_time > 5.0:
-                logger.warning(f"🚨 Cam {self.camera_id} Frozen! Restarting connection...")
-                self._connect() # 强制重连
-                self.last_read_time = time.time() # 重置时间
+                logger.warning(f"🚨 Cam {self.camera_id} Frozen! Restarting...")
+                self._connect()
+                self.last_read_time = time.time()
             time.sleep(2)
 
     def _processor_thread(self):
-        """处理线程：AI 推理"""
         while self.running:
             frame_to_process = None
             with self.lock:
                 if self.latest_frame is not None:
                     frame_to_process = self.latest_frame.copy()
             
-            # 如果没有画面，就不推理，省资源
             if frame_to_process is None:
                 time.sleep(0.1)
                 continue
 
-            # 缩小尺寸加速
             process_frame = cv2.resize(frame_to_process, (640, 360))
+            
+            # ✅ 1. 将帧送入录制器缓冲 (不管是否报警，都要存，为了预录制)
+            self.recorder.add_frame(process_frame)
+            
+            # ✅ 2. 如果正在录制中，继续写入后续帧
+            # 如果录制刚结束 (返回True)，则可以做些清理工作(可选)
+            self.recorder.process_recording(process_frame)
+
             detections = self._run_ai_logic(process_frame)
             final_view = self._draw_ui(process_frame, detections)
             
             self.output_frame = final_view
-            time.sleep(0.03) # 限制推理帧率，防止积压
+            time.sleep(0.03)
 
     def _run_ai_logic(self, frame):
         current_time = time.time()
@@ -143,15 +135,32 @@ class StreamLoader:
         
         for det in detections:
             if det['label'] == 'person': continue
+            
             tid = det['id']
+            conf = det['conf']
             event = self.smoke_events[tid]
             event.last_seen_time = current_time
             event.frame_count += 1
             
+            # 🚨 触发报警逻辑
             if event.frame_count >= self.alarm_threshold_frames:
                 if not event.is_confirmed:
-                    logger.warning(f"🔥 ALARM: Cigarette ID {tid}")
+                    logger.warning(f"🔥 ALARM TRIGGERED: Cigarette ID {tid}")
                     event.is_confirmed = True
+                    
+                    # ✅ 3. 开始录制 (文件名：alarm_时间戳.mp4)
+                    filename = f"alarm_{int(time.time())}_{tid}.mp4"
+                    # 录制后3秒，画面尺寸640x360
+                    video_path = self.recorder.start_recording(filename, post_record_sec=3, width=640, height=360)
+                    
+                    # ✅ 4. 保存特写截图
+                    img_name = f"alarm_{int(time.time())}_{tid}.jpg"
+                    roi_path = self.recorder.save_snapshot(frame, img_name)
+                    
+                    # ✅ 5. 写入数据库 (异步执行，防卡顿)
+                    threading.Thread(target=self._save_alarm_to_db, 
+                                     args=(conf, video_path, roi_path)).start()
+
                 det['is_alarm'] = True
             else:
                 det['is_alarm'] = False
@@ -163,64 +172,83 @@ class StreamLoader:
             
         return detections
 
+    def _save_alarm_to_db(self, confidence, video_full_path, roi_rel_path):
+        """将报警信息写入 MySQL"""
+        try:
+            # 这是一个在子线程里运行的函数，需要手动推 context
+            from app import create_app
+            app = create_app() # 这里会复用配置
+            
+            # 转换视频路径为相对路径 (static/evidence/...)
+            if video_full_path:
+                video_rel_path = "static/evidence/" + os.path.basename(video_full_path)
+            else:
+                video_rel_path = ""
+
+            with app.app_context():
+                new_alarm = Alarms(
+                    camera_id=self.camera_id,
+                    type='SMOKING',
+                    confidence=confidence,
+                    video_url=video_rel_path,
+                    roi_url=roi_rel_path
+                )
+                db.session.add(new_alarm)
+                db.session.commit()
+                logger.info(f"✅ Alarm saved to DB: ID {new_alarm.id}")
+        except Exception as e:
+            logger.error(f"❌ DB Save Error: {e}")
+
     def _draw_ui(self, frame, detections):
+        # (保持你原有的 UI 绘制逻辑不变)
         h, w = frame.shape[:2]
         is_global_alarm = False
-        
         for det in detections:
             box = det['box']
             conf = det['conf']
             label = det['label']
-            
             if label == 'person':
-                color = (255, 0, 0) 
-                thickness = 2
-                text = f"Person {conf:.2f}"
+                color = (255, 0, 0); thickness = 2; text = f"Person {conf:.2f}"
             elif det.get('is_alarm', False):
-                color = (0, 0, 255)
-                thickness = 3
-                text = f"SMOKING! {conf:.2f}"
+                color = (0, 0, 255); thickness = 3; text = f"SMOKING! {conf:.2f}"
                 is_global_alarm = True
             else:
-                color = (0, 255, 255)
-                thickness = 2
-                text = f"Smoke {conf:.2f}"
-            
+                color = (0, 255, 255); thickness = 2; text = f"Smoke {conf:.2f}"
             cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, thickness)
-            cv2.putText(frame, text, (box[0], box[1]-10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
+            cv2.putText(frame, text, (box[0], box[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         if is_global_alarm:
             cv2.rectangle(frame, (0, 0), (w, h), (0, 0, 255), 8)
-            cv2.putText(frame, "SMOKING DETECTED", (20, 50), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-            
+            cv2.putText(frame, "SMOKING DETECTED", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
         return frame
-
+        
+    # (保持 get_latest_frame 不变)
     def get_latest_frame(self):
-        if self.output_frame is not None:
-            return self.output_frame
-        if self.latest_frame is not None:
-            return cv2.resize(self.latest_frame, (640, 360))
+        if self.output_frame is not None: return self.output_frame
+        if self.latest_frame is not None: return cv2.resize(self.latest_frame, (640, 360))
         return None
 
+# (StreamManager 类保持不变)
 class StreamManager:
     def __init__(self, buffer_size=60):
         self.stream_loaders = {}
         self.buffer_size = buffer_size
+        self.app = None # 新增：用来存 app 实例
+
+    # 新增：接收 app 实例
+    def init_app(self, app):
+        self.app = app
 
     def add_camera(self, cid, url):
         if cid in self.stream_loaders: return True
-        l = StreamLoader(cid, url)
+        # 把 self.app 传给 StreamLoader
+        l = StreamLoader(cid, url, self.app) 
         if l.start(): 
             self.stream_loaders[cid] = l
             return True
         return False
-
     def get_latest_frame(self, cid):
         l = self.stream_loaders.get(cid)
         return l.get_latest_frame() if l else None
-
     def remove_camera(self, cid):
         if cid in self.stream_loaders:
             self.stream_loaders[cid].stop()
