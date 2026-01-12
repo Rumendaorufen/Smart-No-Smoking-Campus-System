@@ -197,6 +197,53 @@
       <span class="copyright">© 2024 智慧校园禁烟监控系统 | 技术支持：智能视觉分析技术</span>
     </div>
     
+    <!-- 全屏视频弹窗 -->
+    <el-dialog 
+      v-model="fullScreenDialogVisible" 
+      title="全屏监控" 
+      width="90%"
+      height="90%"
+      class="fullscreen-dialog"
+      :close-on-click-modal="false"
+      :close-on-press-escape="true"
+    >
+      <div class="fullscreen-video-container">
+        <div v-if="fullScreenDevice">
+          <div class="fullscreen-device-info">
+            <h3>{{ fullScreenDevice.name }}</h3>
+            <div class="fullscreen-device-status" :class="fullScreenDevice.status === 1 ? 'online' : 'offline'">
+              <span class="status-dot"></span>
+              {{ fullScreenDevice.status === 1 ? '在线' : '离线' }}
+            </div>
+          </div>
+          <div class="fullscreen-video-wrapper">
+            <img 
+              :src="getStreamUrl(fullScreenDevice.id)" 
+              alt="监控画面" 
+              class="fullscreen-video-stream"
+              @error="handleVideoError(fullScreenDevice.id)"
+              @load="handleVideoLoaded(fullScreenDevice.id)"
+            >
+            <div v-if="fullScreenDevice.status !== 1" class="fullscreen-offline-overlay">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="64" height="64">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z"/>
+              </svg>
+              <span>信号丢失</span>
+            </div>
+            <div v-else-if="fullScreenDevice.isLoading" class="fullscreen-loading-overlay">
+              <div class="loading-spinner"></div>
+              <span>加载中...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button type="primary" @click="fullScreenDialogVisible = false">关闭</el-button>
+        </span>
+      </template>
+    </el-dialog>
+    
     <!-- 添加设备弹窗 -->
     <el-dialog 
       v-model="addDeviceDialogVisible" 
@@ -223,6 +270,33 @@
         </span>
       </template>
     </el-dialog>
+    
+    <!-- 编辑设备弹窗 -->
+    <el-dialog 
+      v-model="editDeviceDialogVisible" 
+      title="编辑设备" 
+      width="500px"
+      class="device-dialog"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="editDeviceForm" label-width="100px">
+        <el-form-item label="设备名称" required>
+          <el-input v-model="editDeviceForm.name" placeholder="请输入设备名称" />
+        </el-form-item>
+        <el-form-item label="RTSP地址" required>
+          <el-input v-model="editDeviceForm.rtsp_url" placeholder="请输入RTSP地址" type="textarea" rows="2" />
+          <div class="rtsp-tip">
+            格式示例: rtsp://admin:password@192.168.1.101:554/stream1
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="editDeviceDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="submitEditDevice">确定</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -231,9 +305,18 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElNotification, ElMessageBox } from 'element-plus'
 import deviceApi from '../api/device'
 
-const devices = ref<any[]>([])
+const devices = ref<any[]>([]) 
 const addDeviceDialogVisible = ref(false)
+const editDeviceDialogVisible = ref(false)
+const fullScreenDialogVisible = ref(false)
+const fullScreenDevice = ref<any>(null)
+const currentEditingDeviceId = ref<number | null>(null)
+const streamVersion = ref(0) // 用于强制刷新视频流
 const addDeviceForm = ref({
+  name: '',
+  rtsp_url: ''
+})
+const editDeviceForm = ref({
   name: '',
   rtsp_url: ''
 })
@@ -276,11 +359,12 @@ const loadDevices = async () => {
   try {
     const response = await deviceApi.getDevices()
     if (response.code === 200) {
-      // 初始化设备状态
+      // 初始化设备状态，确保每次加载都是全新数据
       devices.value = response.data.map((device: any) => ({
         ...device,
         isLoading: false
       }))
+      console.log('设备列表已更新:', devices.value.length, '个设备')
     }
   } catch (error) {
     // 错误由拦截器处理，这里不需要额外处理
@@ -290,13 +374,15 @@ const loadDevices = async () => {
 // 刷新设备
 const refreshDevices = () => {
   loadDevices()
+  // 刷新视频流版本，强制浏览器重新请求
+  streamVersion.value++
   ElMessage.success('正在刷新设备列表...')
 }
 
 // 获取视频流URL
 const getStreamUrl = (deviceId: number) => {
-  // 使用代理路径访问视频流
-  const url = `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${deviceId}`
+  // 使用代理路径访问视频流，添加版本号参数防止浏览器缓存
+  const url = `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${deviceId}?v=${streamVersion.value}`
   console.log(`获取视频流URL: ${url}`)
   return url
 }
@@ -326,14 +412,50 @@ const handleVideoLoaded = (deviceId: number) => {
 
 // 全屏查看
 const viewFullScreen = (deviceId: number) => {
-  // 这里可以实现全屏功能
-  ElMessage.info('全屏功能开发中')
+  const device = devices.value.find(d => d.id === deviceId)
+  if (device) {
+    fullScreenDevice.value = device
+    fullScreenDialogVisible.value = true
+  }
 }
 
 // 编辑设备
 const editDevice = (device: any) => {
-  // 这里可以实现编辑功能
-  ElMessage.info('编辑功能开发中')
+  currentEditingDeviceId.value = device.id
+  // 兼容后端返回的 'rtsp' 或 'rtsp_url' 字段名
+  const rtspUrl = device.rtsp_url || device.rtsp || ''
+  editDeviceForm.value = {
+    name: device.name,
+    rtsp_url: rtspUrl
+  }
+  editDeviceDialogVisible.value = true
+}
+
+// 提交编辑设备
+const submitEditDevice = async () => {
+  // 表单验证
+  if (!editDeviceForm.value.name || !editDeviceForm.value.rtsp_url) {
+    ElMessage.warning('请填写完整的设备信息')
+    return
+  }
+  
+  try {
+    if (!currentEditingDeviceId.value) {
+      ElMessage.error('设备ID获取失败')
+      return
+    }
+    
+    const response = await deviceApi.updateDevice(currentEditingDeviceId.value, editDeviceForm.value)
+    if (response.code === 200) {
+      ElMessage.success('设备更新成功')
+      editDeviceDialogVisible.value = false
+      streamVersion.value++ // 先刷新视频流版本
+      loadDevices() // 再重新加载设备列表
+      currentEditingDeviceId.value = null
+    }
+  } catch (error) {
+    // 错误由拦截器处理，这里不需要额外处理
+  }
 }
 
 // 删除设备
@@ -348,6 +470,11 @@ const deleteDevice = (deviceId: number) => {
       if (response.code === 200) {
         ElMessage.success('设备删除成功')
         loadDevices() // 重新加载设备列表
+        // 如果当前全屏的是被删除的设备，关闭全屏
+        if (fullScreenDevice.value?.id === deviceId) {
+          fullScreenDialogVisible.value = false
+          fullScreenDevice.value = null
+        }
       }
     } catch (error) {
       // 错误由拦截器处理，这里不需要额外处理
@@ -380,6 +507,7 @@ const submitAddDevice = async () => {
       ElMessage.success('设备添加成功')
       addDeviceDialogVisible.value = false
       loadDevices() // 重新加载设备列表
+      streamVersion.value++ // 刷新视频流
     }
   } catch (error) {
     // 错误由拦截器处理，这里不需要额外处理
@@ -931,5 +1059,130 @@ const submitAddDevice = async () => {
   .video-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* 全屏视频弹窗样式 */
+.fullscreen-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+:deep(.fullscreen-dialog .el-dialog__body) {
+  padding: 0;
+  height: calc(100% - 100px);
+  overflow: hidden;
+}
+
+.fullscreen-video-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+
+.fullscreen-device-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 20px;
+  background: rgba(22, 33, 52, 0.95);
+  border-bottom: 1px solid rgba(64, 158, 255, 0.3);
+}
+
+.fullscreen-device-info h3 {
+  margin: 0;
+  font-size: 20px;
+  color: #e4e7ed;
+  font-weight: 600;
+}
+
+.fullscreen-device-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fullscreen-device-status.online {
+  color: #67c23a;
+}
+
+.fullscreen-device-status.offline {
+  color: #f56c6c;
+}
+
+.fullscreen-video-wrapper {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  height: calc(100% - 60px);
+  overflow: hidden;
+}
+
+.fullscreen-video-stream {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.fullscreen-offline-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  color: #909399;
+  font-size: 18px;
+}
+
+.fullscreen-offline-overlay svg {
+  opacity: 0.7;
+}
+
+.fullscreen-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  color: #409eff;
+  font-size: 18px;
+}
+
+:deep(.fullscreen-dialog) {
+  background: #1a1f2e;
+  border: 1px solid rgba(64, 158, 255, 0.3);
+  border-radius: 10px;
+}
+
+:deep(.fullscreen-dialog .el-dialog__header) {
+  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
+  padding-bottom: 15px;
+}
+
+:deep(.fullscreen-dialog .el-dialog__title) {
+  color: #e4e7ed;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+:deep(.fullscreen-dialog .el-dialog__footer) {
+  border-top: 1px solid rgba(64, 158, 255, 0.2);
+  padding-top: 15px;
 }
 </style>

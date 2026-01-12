@@ -52,11 +52,24 @@ class StreamLoader:
         """建立连接的独立方法"""
         try:
             if self.cap: self.cap.release()
-            # 强制使用 TCP 传输，比 UDP 更稳定，不易花屏
+            
+            # 1. 强制使用 TCP 传输 (解决花屏和 UDP 丢包导致的解码错误)
+            # ⚠️ 注意：这行必须在 cv2.VideoCapture 之前设置
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|buffer_size;1024"
-            self.cap = cv2.VideoCapture(self.rtsp_url)
+            
+            # 2. 指定后端为 FFmpeg (Windows下有时候会默认跳到 DSHOW 或 MSMF，导致不稳定)
+            self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+            
             if self.cap.isOpened():
-                logger.info(f"✅ Cam {self.camera_id} Connected.")
+                # 🛑 关键修复：禁用 FFmpeg 内部多线程
+                # 这能完美解决 "fctx->async_lock failed" 错误
+                # 0 表示自动，1 表示禁用多线程。虽然牺牲了一丢丢单帧解码速度，但换来了绝对的稳定。
+                self.cap.set(cv2.CAP_PROP_N_THREADS, 1)
+                
+                # 设置缓冲区大小为 1 (尽可能低延迟)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                
+                logger.info(f"✅ Cam {self.camera_id} Connected (Threads=1).")
                 return True
         except Exception as e:
             logger.error(f"Connection error: {e}")

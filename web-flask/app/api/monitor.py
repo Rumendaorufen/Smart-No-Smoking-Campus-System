@@ -70,6 +70,36 @@ def delete_device(device_id):
         db.rollback()
         return jsonify({'code': 500, 'msg': str(e)})
 
+@monitor_bp.route('/devices/<int:device_id>', methods=['PUT'])
+def update_device(device_id):
+    """更新设备信息"""
+    try:
+        db = next(get_db())
+        device = db.query(Devices).filter(Devices.id == device_id).first()
+        if not device:
+            return jsonify({'code': 404, 'msg': '设备不存在'}), 404
+        
+        data = request.json
+        
+        # 更新设备信息
+        if 'name' in data:
+            device.name = data['name']
+        if 'rtsp_url' in data or 'rtsp' in data:
+            # 兼容两种字段名
+            new_rtsp = data.get('rtsp_url') or data.get('rtsp')
+            # 如果 RTSP 地址改变，重新启动拉流
+            if new_rtsp and new_rtsp != device.rtsp_url:
+                device.rtsp_url = new_rtsp
+                # 停止旧流，重新拉流
+                stream_manager.remove_camera(device_id)
+                stream_manager.add_camera(device_id, new_rtsp)
+        
+        db.commit()
+        return jsonify({'code': 200, 'msg': '更新成功'})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'code': 500, 'msg': f'更新失败: {str(e)}'})
+
 # ==========================================
 # 2. 视频流逻辑 (融合 AI 处理)
 # ==========================================
