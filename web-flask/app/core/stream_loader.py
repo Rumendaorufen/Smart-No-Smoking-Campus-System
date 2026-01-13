@@ -150,33 +150,59 @@ class StreamLoader:
                 time.sleep(0.1)
                 continue
 
-            process_frame = cv2.resize(frame_to_process, (640, 360))
+            #process_frame = cv2.resize(frame_to_process, (640, 360))
+            # 🛑 关键修改：不要在这里 resize 到 640x360！
+            # process_frame = cv2.resize(frame_to_process, (640, 360)) <--- 删掉这行
+            # 直接使用原图 (例如 1920x1080)
+            process_frame = frame_to_process
             
             self.recorder.add_frame(process_frame)
             self.recorder.process_recording(process_frame)
 
             detections = self._run_ai_logic(process_frame)
+            # 画完框后再缩放 (为了前端传输流畅，展示时可以小一点，但检测时必须大)
             final_view = self._draw_ui(process_frame, detections)
+            # 这里的 output_frame 可以缩放，节省网络带宽
+            self.output_frame = cv2.resize(final_view, (1280, 720)) 
             
-            self.output_frame = final_view
             time.sleep(0.03)
 
     def _match_person_id(self, cigarette_box, person_detections):
-        # ... (保持原样) ...
         c_x1, c_y1, c_x2, c_y2 = cigarette_box
         c_center_x = (c_x1 + c_x2) / 2
         c_center_y = (c_y1 + c_y2) / 2
+        
+        # 寻找距离最近的人，而不仅仅是包含关系
+        min_dist = float('inf')
         best_match_id = None
+        
         for p in person_detections:
             p_box = p['box']
             p_id = p['id']
-            padding = 50
-            if (p_box[0] - padding < c_center_x < p_box[2] + padding) and \
-               (p_box[1] - padding < c_center_y < p_box[3] + padding):
-                return p_id
-        return None
+            
+            # 计算人的中心点
+            p_center_x = (p_box[0] + p_box[2]) / 2
+            p_center_y = (p_box[1] + p_box[3]) / 2
+            
+            # 计算人框的宽度（用来动态调整搜索半径）
+            p_width = p_box[2] - p_box[0]
+            
+            # 搜索半径：在这个人宽度的 2倍 范围内都算他的
+            # 远处的烟头可能看起来离人很远，其实像素距离很近
+            search_radius = max(p_width * 2.0, 100.0) 
+
+            # 计算欧几里得距离
+            dist = math.sqrt((c_center_x - p_center_x)**2 + (c_center_y - p_center_y)**2)
+            
+            if dist < search_radius:
+                if dist < min_dist:
+                    min_dist = dist
+                    best_match_id = p_id
+        
+        return best_match_id
 
     def _run_ai_logic(self, frame):
+        h, w = frame.shape[:2] # <--- 获取真实尺寸
         # ... (保持原样，含冷却逻辑) ...
         current_time = time.time()
         detections = self.detector.detect(frame)
@@ -207,7 +233,12 @@ class StreamLoader:
                         
                         file_prefix = f"alarm_p{owner_id}" if owner_id else "alarm_unknown"
                         filename = f"{file_prefix}_{int(time.time())}.mp4"
-                        video_path = self.recorder.start_recording(filename, post_record_sec=5)
+                        video_path = self.recorder.start_recording(
+                            filename, 
+                            post_record_sec=5, 
+                            width=w,  # <--- 传真实宽
+                            height=h  # <--- 传真实高
+                        )
                         img_name = f"{file_prefix}_{int(time.time())}.jpg"
                         roi_path = self.recorder.save_snapshot(frame, img_name)
                         threading.Thread(target=self._save_alarm_to_db, args=(conf, video_path, roi_path)).start()
