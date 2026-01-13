@@ -4,6 +4,7 @@ import time
 # 1. 直接导入全局 db 对象和模型
 from app.models import db, Devices 
 from app import stream_manager 
+from flask_jwt_extended import jwt_required
 
 monitor_bp = Blueprint('monitor', __name__)
 
