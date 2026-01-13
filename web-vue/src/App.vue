@@ -1,11 +1,8 @@
 <template>
-  <div id="app">
-    <MonitorView />
-  </div>
+<router-view></router-view>
 </template>
 
 <script setup lang="ts">
-import MonitorView from './views/Monitor.vue'
 </script>
 
 <style>
