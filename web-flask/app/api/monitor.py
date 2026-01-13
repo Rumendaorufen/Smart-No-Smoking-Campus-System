@@ -42,6 +42,40 @@ def add_device():
     except Exception as e:
         db.session.rollback()
         return jsonify({'code': 500, 'msg': f"添加失败: {str(e)}"})
+    
+@monitor_bp.route('/devices/<int:device_id>', methods=['PUT'])
+def update_device(device_id):
+    """编辑/更新设备信息"""
+    try:
+        # 1. 查找设备
+        device = Devices.query.get(device_id)
+        if not device:
+            return jsonify({'code': 404, 'msg': '设备不存在'}), 404
+        
+        data = request.json
+        old_rtsp_url = device.rtsp_url
+        new_rtsp_url = data.get('rtsp_url') or data.get('rtsp') # 兼容字段名
+
+        # 2. 更新数据库字段
+        if 'name' in data:
+            device.name = data['name']
+        
+        if new_rtsp_url and new_rtsp_url != old_rtsp_url:
+            device.rtsp_url = new_rtsp_url
+            
+            # 🛑 关键：如果修改了 RTSP 地址，必须把旧的推流进程杀掉
+            # 这样前端刷新时，StreamManager 会用新地址重新拉流
+            print(f"🔄 检测到 RTSP 地址变更，正在重启流: Cam {device_id}")
+            stream_manager.remove_camera(device_id)
+
+        db.session.commit()
+        
+        return jsonify({'code': 200, 'msg': '更新成功'})
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ 更新设备失败: {e}")
+        return jsonify({'code': 500, 'msg': f"更新失败: {str(e)}"})
 
 @monitor_bp.route('/devices/<int:device_id>', methods=['DELETE'])
 def delete_device(device_id):

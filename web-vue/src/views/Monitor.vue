@@ -1,7 +1,5 @@
-<!-- 实时监控大屏页面 -->
 <template>
   <div class="monitor-screen">
-    <!-- 顶部状态栏 -->
     <div class="top-bar">
       <div class="logo-section">
         <div class="logo-icon">
@@ -33,9 +31,8 @@
       </div>
     </div>
     
-    <!-- 主监控区域 -->
     <div class="main-content">
-      <!-- 左侧信息面板 -->
+      
       <div class="side-panel left-panel">
         <div class="panel-section">
           <div class="section-title">
@@ -88,125 +85,124 @@
         </div>
       </div>
       
-      <!-- 视频监控网格 -->
-      <div class="video-grid">
-        <div 
-          v-for="device in devices" 
-          :key="device.id" 
-          class="video-card"
-          :class="{ 'offline': device.status !== 1 }"
-        >
-          <div class="card-header">
-            <div class="device-name">
-              <span class="name-icon">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                  <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-                </svg>
-              </span>
-              {{ device.name }}
+      <div class="center-monitor">
+        <div v-if="currentDevice" class="monitor-player-box" :class="{ 'offline': currentDevice.status !== 1 }">
+          <div class="player-header">
+            <div class="header-left">
+              <span class="live-badge">LIVE</span>
+              <span class="device-title">{{ currentDevice.name }}</span>
+              <span class="device-id">ID: {{ currentDevice.id }}</span>
             </div>
-            <div class="device-status" :class="device.status === 1 ? 'online' : 'offline'">
+            <div class="header-status" :class="currentDevice.status === 1 ? 'online' : 'offline'">
               <span class="status-dot"></span>
-              {{ device.status === 1 ? '在线' : '离线' }}
+              {{ currentDevice.status === 1 ? '信号正常' : '信号丢失' }}
             </div>
           </div>
-          
-          <div class="video-container">
+
+          <div class="player-content">
             <img 
-              :src="getStreamUrl(device.id)" 
+              :src="getStreamUrl(currentDevice.id)" 
               alt="监控画面" 
-              class="video-stream"
-              @error="handleVideoError(device.id)"
-              @load="handleVideoLoaded(device.id)"
+              class="main-stream"
+              @error="handleVideoError(currentDevice.id)"
+              @load="handleVideoLoaded(currentDevice.id)"
             >
-            <div v-if="device.status !== 1" class="offline-overlay">
-              <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
+            
+            <div v-if="currentDevice.status !== 1" class="player-overlay offline">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="64" height="64">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z"/>
               </svg>
-              <span>信号丢失</span>
+              <div class="overlay-text">设备离线</div>
+              <div class="overlay-sub">请检查网络或RTSP配置</div>
             </div>
-            <div v-else-if="device.isLoading" class="loading-overlay">
-              <div class="loading-spinner"></div>
-              <span>加载中...</span>
+            
+            <div v-else-if="currentDevice.isLoading" class="player-overlay loading">
+              <div class="loading-spinner large"></div>
+              <div class="overlay-text">正在连接视频流...</div>
             </div>
           </div>
-          
-          <div class="card-footer">
-            <div class="device-info">
-              <span class="info-label">设备ID:</span>
-              <span class="info-value">{{ device.id }}</span>
+
+          <div class="player-controls">
+            <div class="control-group">
+                <div class="control-info">
+                    RTSP: {{ currentDevice.rtsp_url }}
+                </div>
             </div>
-            <div class="device-actions">
-              <el-button size="small" circle @click="viewFullScreen(device.id)" title="全屏">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                  <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-                </svg>
-              </el-button>
-              <el-button size="small" circle type="warning" @click="editDevice(device)" title="编辑">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+            <div class="control-group right">
+              <el-button type="primary" plain size="default" @click="editDevice(currentDevice)">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="margin-right:5px">
                   <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
                 </svg>
+                编辑配置
               </el-button>
-              <el-button size="small" circle type="danger" @click="deleteDevice(device.id)" title="删除">
-                <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+              
+              <el-button type="danger" plain size="default" @click="deleteDevice(currentDevice.id)">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="margin-right:5px">
                   <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                </svg>
+                删除设备
+              </el-button>
+
+              <div class="divider"></div>
+
+              <el-button type="primary" circle size="large" @click="viewFullScreen(currentDevice.id)" title="全屏沉浸模式">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                  <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
                 </svg>
               </el-button>
             </div>
           </div>
         </div>
+
+        <div v-else class="empty-state">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="64" height="64">
+            <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
+          </svg>
+          <p>暂无选中设备，请从右侧列表选择或添加新设备</p>
+          <el-button type="primary" @click="addDevice">立即添加</el-button>
+        </div>
       </div>
       
-      <!-- 右侧信息面板 -->
       <div class="side-panel right-panel">
-        <div class="panel-section">
+        <div class="panel-section full-height">
           <div class="section-title">
             <span class="title-dot"></span>
-            设备列表
+            监控列表 ({{ devices.length }})
           </div>
-          <div class="device-list-mini">
+          <div class="device-list-scroll">
             <div 
               v-for="device in devices" 
               :key="device.id" 
-              class="device-item"
-              :class="{ 'online': device.status === 1, 'offline': device.status !== 1 }"
+              class="device-nav-item"
+              :class="{ 
+                'active': currentDevice && currentDevice.id === device.id,
+                'offline': device.status !== 1 
+              }"
+              @click="switchDevice(device)"
             >
-              <span class="item-status"></span>
-              <span class="item-name">{{ device.name }}</span>
+              <div class="nav-status-indicator"></div>
+              <div class="nav-content">
+                <div class="nav-name">{{ device.name }}</div>
+                <div class="nav-sub">ID: {{ device.id }}</div>
+              </div>
+              <div class="nav-arrow">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                  <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/>
+                </svg>
+              </div>
             </div>
           </div>
         </div>
         
-        <div class="panel-section">
-          <div class="section-title">
-            <span class="title-dot"></span>
-            帮助信息
-          </div>
-          <div class="help-text">
-            <p>• 点击全屏按钮可放大查看单个监控画面</p>
-            <p>• 设备离线时请检查网络连接</p>
-            <p>• 如需添加新设备，请点击添加设备按钮</p>
-          </div>
         </div>
-      </div>
     </div>
     
-    <!-- 底部信息栏 -->
     <div class="bottom-bar">
       <div class="scan-line"></div>
       <span class="copyright">© 2024 智慧校园禁烟监控系统 | 技术支持：智能视觉分析技术</span>
     </div>
-    
-    <!-- 全屏视频弹窗 -->
-    <el-dialog 
-      v-model="fullScreenDialogVisible" 
-      title="全屏监控" 
-      width="90%"
-      height="90%"
-      class="fullscreen-dialog"
-      :close-on-click-modal="false"
-      :close-on-press-escape="true"
-    >
+
+    <el-dialog v-model="fullScreenDialogVisible" title="全屏监控" width="90%" height="90%" class="fullscreen-dialog" :close-on-click-modal="false" :close-on-press-escape="true">
       <div class="fullscreen-video-container">
         <div v-if="fullScreenDevice">
           <div class="fullscreen-device-info">
@@ -217,85 +213,37 @@
             </div>
           </div>
           <div class="fullscreen-video-wrapper">
-            <img 
-              :src="getStreamUrl(fullScreenDevice.id)" 
-              alt="监控画面" 
-              class="fullscreen-video-stream"
-              @error="handleVideoError(fullScreenDevice.id)"
-              @load="handleVideoLoaded(fullScreenDevice.id)"
-            >
+            <img :src="getStreamUrl(fullScreenDevice.id)" alt="监控画面" class="fullscreen-video-stream" @error="handleVideoError(fullScreenDevice.id)" @load="handleVideoLoaded(fullScreenDevice.id)">
             <div v-if="fullScreenDevice.status !== 1" class="fullscreen-offline-overlay">
-              <svg viewBox="0 0 24 24" fill="currentColor" width="64" height="64">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z"/>
-              </svg>
+              <svg viewBox="0 0 24 24" fill="currentColor" width="64" height="64"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.42 0 8 3.58 8 8 0 1.85-.63 3.55-1.69 4.9z"/></svg>
               <span>信号丢失</span>
-            </div>
-            <div v-else-if="fullScreenDevice.isLoading" class="fullscreen-loading-overlay">
-              <div class="loading-spinner"></div>
-              <span>加载中...</span>
             </div>
           </div>
         </div>
       </div>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button type="primary" @click="fullScreenDialogVisible = false">关闭</el-button>
-        </span>
-      </template>
+      <template #footer><span class="dialog-footer"><el-button type="primary" @click="fullScreenDialogVisible = false">关闭</el-button></span></template>
     </el-dialog>
-    
-    <!-- 添加设备弹窗 -->
-    <el-dialog 
-      v-model="addDeviceDialogVisible" 
-      title="添加设备" 
-      width="500px"
-      class="device-dialog"
-      :close-on-click-modal="false"
-    >
+
+    <el-dialog v-model="addDeviceDialogVisible" title="添加设备" width="500px" class="device-dialog" :close-on-click-modal="false">
       <el-form :model="addDeviceForm" label-width="100px">
-        <el-form-item label="设备名称" required>
-          <el-input v-model="addDeviceForm.name" placeholder="请输入设备名称" />
-        </el-form-item>
+        <el-form-item label="设备名称" required><el-input v-model="addDeviceForm.name" placeholder="请输入设备名称" /></el-form-item>
         <el-form-item label="RTSP地址" required>
           <el-input v-model="addDeviceForm.rtsp_url" placeholder="请输入RTSP地址" type="textarea" rows="2" />
-          <div class="rtsp-tip">
-            格式示例: rtsp://admin:password@192.168.1.101:554/stream1
-          </div>
+          <div class="rtsp-tip">格式示例: rtsp://admin:password@192.168.1.101:554/stream1</div>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="addDeviceDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitAddDevice">确定</el-button>
-        </span>
-      </template>
+      <template #footer><span class="dialog-footer"><el-button @click="addDeviceDialogVisible = false">取消</el-button><el-button type="primary" @click="submitAddDevice">确定</el-button></span></template>
     </el-dialog>
-    
-    <!-- 编辑设备弹窗 -->
-    <el-dialog 
-      v-model="editDeviceDialogVisible" 
-      title="编辑设备" 
-      width="500px"
-      class="device-dialog"
-      :close-on-click-modal="false"
-    >
+
+    <el-dialog v-model="editDeviceDialogVisible" title="编辑设备" width="500px" class="device-dialog" :close-on-click-modal="false">
       <el-form :model="editDeviceForm" label-width="100px">
-        <el-form-item label="设备名称" required>
-          <el-input v-model="editDeviceForm.name" placeholder="请输入设备名称" />
-        </el-form-item>
+        <el-form-item label="设备名称" required><el-input v-model="editDeviceForm.name" placeholder="请输入设备名称" /></el-form-item>
         <el-form-item label="RTSP地址" required>
           <el-input v-model="editDeviceForm.rtsp_url" placeholder="请输入RTSP地址" type="textarea" rows="2" />
-          <div class="rtsp-tip">
-            格式示例: rtsp://admin:password@192.168.1.101:554/stream1
-          </div>
+          <div class="rtsp-tip">格式示例: rtsp://admin:password@192.168.1.101:554/stream1</div>
         </el-form-item>
       </el-form>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="editDeviceDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitEditDevice">确定</el-button>
-        </span>
-      </template>
+      <template #footer><span class="dialog-footer"><el-button @click="editDeviceDialogVisible = false">取消</el-button><el-button type="primary" @click="submitEditDevice">确定</el-button></span></template>
     </el-dialog>
   </div>
 </template>
@@ -306,20 +254,19 @@ import { ElMessage, ElNotification, ElMessageBox } from 'element-plus'
 import deviceApi from '../api/device'
 
 const devices = ref<any[]>([]) 
+// 新增：当前选中的设备
+const currentDevice = ref<any>(null)
+
+// 弹窗状态
 const addDeviceDialogVisible = ref(false)
 const editDeviceDialogVisible = ref(false)
 const fullScreenDialogVisible = ref(false)
 const fullScreenDevice = ref<any>(null)
 const currentEditingDeviceId = ref<number | null>(null)
-const streamVersion = ref(0) // 用于强制刷新视频流
-const addDeviceForm = ref({
-  name: '',
-  rtsp_url: ''
-})
-const editDeviceForm = ref({
-  name: '',
-  rtsp_url: ''
-})
+const streamVersion = ref(0)
+
+const addDeviceForm = ref({ name: '', rtsp_url: '' })
+const editDeviceForm = ref({ name: '', rtsp_url: '' })
 
 const currentTime = ref('')
 const currentDate = ref('')
@@ -328,20 +275,80 @@ let timeTimer: ReturnType<typeof setInterval> | null = null
 const onlineCount = computed(() => devices.value.filter(d => d.status === 1).length)
 const offlineCount = computed(() => devices.value.filter(d => d.status !== 1).length)
 
+// 新增：切换设备函数
+const switchDevice = (device: any) => {
+  currentDevice.value = device
+}
+
+// 修改：加载设备列表后自动选中第一个
+const loadDevices = async () => {
+  try {
+    const response = await deviceApi.getDevices()
+    if (response.code === 200) {
+      devices.value = response.data.map((device: any) => ({
+        ...device,
+        isLoading: false
+      }))
+      
+      // 逻辑：如果当前没有选中设备，或者选中的设备不在新列表中，默认选中第一个
+      if (devices.value.length > 0) {
+        if (!currentDevice.value || !devices.value.find(d => d.id === currentDevice.value.id)) {
+          // 优先找在线的，没有在线的就找第一个
+          const firstOnline = devices.value.find(d => d.status === 1)
+          currentDevice.value = firstOnline || devices.value[0]
+        } else {
+          // 如果当前设备还在列表里，更新它的状态信息
+          const updatedCurrent = devices.value.find(d => d.id === currentDevice.value.id)
+          if(updatedCurrent) currentDevice.value = updatedCurrent
+        }
+      } else {
+        currentDevice.value = null
+      }
+      
+      console.log('设备列表已更新:', devices.value.length, '个设备')
+    }
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+// 刷新设备
+const refreshDevices = () => {
+  loadDevices()
+  streamVersion.value++
+  ElMessage.success('正在刷新设备列表...')
+}
+
+const getStreamUrl = (deviceId: number) => {
+  return `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${deviceId}?v=${streamVersion.value}`
+}
+
+const handleVideoError = (deviceId: number) => {
+  const device = devices.value.find(d => d.id === deviceId)
+  if (device) {
+    device.status = 0
+    // 如果出错的是当前大屏显示的设备，强制更新视图状态
+    if (currentDevice.value && currentDevice.value.id === deviceId) {
+        currentDevice.value.status = 0
+    }
+  }
+}
+
+const handleVideoLoaded = (deviceId: number) => {
+  const device = devices.value.find(d => d.id === deviceId)
+  if (device) {
+    device.status = 1
+    if (currentDevice.value && currentDevice.value.id === deviceId) {
+        currentDevice.value.status = 1
+    }
+  }
+}
+
+// 保持其他逻辑不变...
 const updateTime = () => {
   const now = new Date()
-  currentTime.value = now.toLocaleTimeString('zh-CN', { 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    second: '2-digit',
-    hour12: false 
-  })
-  currentDate.value = now.toLocaleDateString('zh-CN', { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric', 
-    weekday: 'long' 
-  })
+  currentTime.value = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  currentDate.value = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
 }
 
 onMounted(() => {
@@ -354,63 +361,6 @@ onUnmounted(() => {
   if (timeTimer) clearInterval(timeTimer)
 })
 
-// 加载设备列表
-const loadDevices = async () => {
-  try {
-    const response = await deviceApi.getDevices()
-    if (response.code === 200) {
-      // 初始化设备状态，确保每次加载都是全新数据
-      devices.value = response.data.map((device: any) => ({
-        ...device,
-        isLoading: false
-      }))
-      console.log('设备列表已更新:', devices.value.length, '个设备')
-    }
-  } catch (error) {
-    // 错误由拦截器处理，这里不需要额外处理
-  }
-}
-
-// 刷新设备
-const refreshDevices = () => {
-  loadDevices()
-  // 刷新视频流版本，强制浏览器重新请求
-  streamVersion.value++
-  ElMessage.success('正在刷新设备列表...')
-}
-
-// 获取视频流URL
-const getStreamUrl = (deviceId: number) => {
-  // 使用代理路径访问视频流，添加版本号参数防止浏览器缓存
-  const url = `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${deviceId}?v=${streamVersion.value}`
-  console.log(`获取视频流URL: ${url}`)
-  return url
-}
-
-// 处理视频加载错误
-const handleVideoError = (deviceId: number) => {
-  const device = devices.value.find(d => d.id === deviceId)
-  if (device) {
-    device.status = 0
-    console.error(`设备 ${deviceId} 视频加载失败`)
-    ElNotification.error({
-      title: '视频加载失败',
-      message: `设备 ${device.name} 视频流加载失败，请检查设备连接`,
-      duration: 5000
-    })
-  }
-}
-
-// 处理视频加载成功
-const handleVideoLoaded = (deviceId: number) => {
-  const device = devices.value.find(d => d.id === deviceId)
-  if (device) {
-    device.status = 1
-    console.log(`设备 ${deviceId} 视频加载成功`)
-  }
-}
-
-// 全屏查看
 const viewFullScreen = (deviceId: number) => {
   const device = devices.value.find(d => d.id === deviceId)
   if (device) {
@@ -419,10 +369,8 @@ const viewFullScreen = (deviceId: number) => {
   }
 }
 
-// 编辑设备
 const editDevice = (device: any) => {
   currentEditingDeviceId.value = device.id
-  // 兼容后端返回的 'rtsp' 或 'rtsp_url' 字段名
   const rtspUrl = device.rtsp_url || device.rtsp || ''
   editDeviceForm.value = {
     name: device.name,
@@ -431,113 +379,77 @@ const editDevice = (device: any) => {
   editDeviceDialogVisible.value = true
 }
 
-// 提交编辑设备
 const submitEditDevice = async () => {
-  // 表单验证
   if (!editDeviceForm.value.name || !editDeviceForm.value.rtsp_url) {
     ElMessage.warning('请填写完整的设备信息')
     return
   }
-  
   try {
-    if (!currentEditingDeviceId.value) {
-      ElMessage.error('设备ID获取失败')
-      return
-    }
-    
+    if (!currentEditingDeviceId.value) return
     const response = await deviceApi.updateDevice(currentEditingDeviceId.value, editDeviceForm.value)
     if (response.code === 200) {
       ElMessage.success('设备更新成功')
       editDeviceDialogVisible.value = false
-      streamVersion.value++ // 先刷新视频流版本
-      loadDevices() // 再重新加载设备列表
+      streamVersion.value++
+      loadDevices()
       currentEditingDeviceId.value = null
     }
-  } catch (error) {
-    // 错误由拦截器处理，这里不需要额外处理
-  }
+  } catch (error) {}
 }
 
-// 删除设备
 const deleteDevice = (deviceId: number) => {
   ElMessageBox.confirm('确定要删除该设备吗？', '警告', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
+    confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning'
   }).then(async () => {
     try {
       const response = await deviceApi.deleteDevice(deviceId)
       if (response.code === 200) {
         ElMessage.success('设备删除成功')
-        loadDevices() // 重新加载设备列表
-        // 如果当前全屏的是被删除的设备，关闭全屏
-        if (fullScreenDevice.value?.id === deviceId) {
-          fullScreenDialogVisible.value = false
-          fullScreenDevice.value = null
+        // 如果删除的是当前正在看的设备，置空，等待loadDevices重新选择
+        if (currentDevice.value && currentDevice.value.id === deviceId) {
+            currentDevice.value = null
         }
+        loadDevices()
       }
-    } catch (error) {
-      // 错误由拦截器处理，这里不需要额外处理
-    }
-  }).catch(() => {
-    // 取消删除
-  })
+    } catch (error) {}
+  }).catch(() => {})
 }
 
-// 打开添加设备弹窗
 const addDevice = () => {
-  addDeviceForm.value = {
-    name: '',
-    rtsp_url: ''
-  }
+  addDeviceForm.value = { name: '', rtsp_url: '' }
   addDeviceDialogVisible.value = true
 }
 
-// 提交添加设备
 const submitAddDevice = async () => {
-  // 表单验证
   if (!addDeviceForm.value.name || !addDeviceForm.value.rtsp_url) {
     ElMessage.warning('请填写完整的设备信息')
     return
   }
-  
   try {
     const response = await deviceApi.addDevice(addDeviceForm.value)
     if (response.code === 200) {
       ElMessage.success('设备添加成功')
       addDeviceDialogVisible.value = false
-      loadDevices() // 重新加载设备列表
-      streamVersion.value++ // 刷新视频流
+      loadDevices()
+      streamVersion.value++
     }
-  } catch (error) {
-    // 错误由拦截器处理，这里不需要额外处理
-  }
+  } catch (error) {}
 }
 </script>
 
 <style scoped>
+/* 保持原有基础样式，新增和修改部分如下 */
 .monitor-screen {
-  min-height: 100vh;
+  height: 100vh;
   background: linear-gradient(135deg, #0a0e17 0%, #1a1f2e 50%, #0d1119 100%);
   color: #e4e7ed;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.monitor-screen::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: 
-    radial-gradient(ellipse at 20% 20%, rgba(64, 158, 255, 0.05) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(64, 158, 255, 0.05) 0%, transparent 50%);
-  pointer-events: none;
-  z-index: 0;
-}
-
+/* 顶部栏保持不变 */
 .top-bar {
   display: flex;
   justify-content: space-between;
@@ -548,105 +460,44 @@ const submitAddDevice = async () => {
   position: relative;
   z-index: 10;
   box-shadow: 0 2px 20px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
 }
+/* ...logo-section, status-section, time-section 样式保持不变... */
+.logo-section { display: flex; align-items: center; gap: 12px; }
+.logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, #409eff 0%, #67c23a 100%); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 0 20px rgba(64, 158, 255, 0.5); }
+.system-title { font-size: 20px; font-weight: 600; background: linear-gradient(90deg, #409eff, #67c23a); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; letter-spacing: 2px; }
+.status-section { display: flex; gap: 40px; }
+.status-item { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.status-label { font-size: 12px; color: #909399; text-transform: uppercase; letter-spacing: 1px; }
+.status-value { font-size: 28px; font-weight: 700; font-family: 'Courier New', monospace; }
+.status-value.online { color: #67c23a; text-shadow: 0 0 20px rgba(103, 194, 58, 0.5); }
+.status-value.offline { color: #f56c6c; text-shadow: 0 0 20px rgba(245, 108, 108, 0.5); }
+.time-section { text-align: right; }
+.current-time { font-size: 24px; font-weight: 600; font-family: 'Courier New', monospace; color: #409eff; text-shadow: 0 0 15px rgba(64, 158, 255, 0.5); }
+.current-date { font-size: 12px; color: #909399; margin-top: 4px; }
 
-.logo-section {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.logo-icon {
-  width: 36px;
-  height: 36px;
-  background: linear-gradient(135deg, #409eff 0%, #67c23a 100%);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  box-shadow: 0 0 20px rgba(64, 158, 255, 0.5);
-}
-
-.system-title {
-  font-size: 20px;
-  font-weight: 600;
-  background: linear-gradient(90deg, #409eff, #67c23a);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: 2px;
-}
-
-.status-section {
-  display: flex;
-  gap: 40px;
-}
-
-.status-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.status-label {
-  font-size: 12px;
-  color: #909399;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.status-value {
-  font-size: 28px;
-  font-weight: 700;
-  font-family: 'Courier New', monospace;
-}
-
-.status-value.online {
-  color: #67c23a;
-  text-shadow: 0 0 20px rgba(103, 194, 58, 0.5);
-}
-
-.status-value.offline {
-  color: #f56c6c;
-  text-shadow: 0 0 20px rgba(245, 108, 108, 0.5);
-}
-
-.time-section {
-  text-align: right;
-}
-
-.current-time {
-  font-size: 24px;
-  font-weight: 600;
-  font-family: 'Courier New', monospace;
-  color: #409eff;
-  text-shadow: 0 0 15px rgba(64, 158, 255, 0.5);
-}
-
-.current-date {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
-}
-
+/* 主布局修改 */
 .main-content {
   display: flex;
   padding: 20px;
   gap: 20px;
   position: relative;
   z-index: 5;
-  min-height: calc(100vh - 140px);
+  flex: 1; /* 撑满剩余高度 */
+  min-height: 0; /* 🛑 关键：允许容器收缩，防止被内部内容撑大 */
+  overflow: hidden; /* 防止内容溢出产生滚动条 */
 }
 
+/* 侧边栏样式 */
 .side-panel {
-  width: 220px;
+  width: 260px; /* 稍微加宽一点 */
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 15px;
 }
+
+.left-panel { width: 220px; } /* 左侧保持窄一点 */
 
 .panel-section {
   background: rgba(22, 33, 52, 0.8);
@@ -656,533 +507,297 @@ const submitAddDevice = async () => {
   backdrop-filter: blur(10px);
 }
 
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #409eff;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
-}
-
-.title-dot {
-  width: 8px;
-  height: 8px;
-  background: #409eff;
-  border-radius: 50%;
-  box-shadow: 0 0 10px rgba(64, 158, 255, 0.8);
-}
-
-.status-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  padding: 8px;
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 4px;
-}
-
-.status-row.active .status-icon {
-  color: #67c23a;
-}
-
-.status-row .status-icon {
-  color: #909399;
-}
-
-.status-tag {
-  margin-left: auto;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: rgba(103, 194, 58, 0.2);
-  color: #67c23a;
-}
-
-.status-tag.warning {
-  background: rgba(230, 162, 60, 0.2);
-  color: #e6a23c;
-}
-
-.action-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.action-buttons .el-button {
-  justify-content: center;
-  gap: 6px;
-  border-radius: 6px;
-}
-
-.device-list-mini {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.device-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.device-item .item-status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.device-item.online .item-status {
-  background: #67c23a;
-  box-shadow: 0 0 8px rgba(103, 194, 58, 0.8);
-}
-
-.device-item.offline .item-status {
-  background: #f56c6c;
-  box-shadow: 0 0 8px rgba(245, 108, 108, 0.8);
-}
-
-.help-text {
-  font-size: 12px;
-  color: #909399;
-}
-
-.help-text p {
-  margin: 6px 0;
-  padding-left: 12px;
-  position: relative;
-}
-
-.help-text p::before {
-  content: '›';
-  position: absolute;
-  left: 0;
-  color: #409eff;
-}
-
-.video-grid {
+.panel-section.full-height {
   flex: 1;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.video-card {
+/* 中间大屏样式 (核心修改) */
+.center-monitor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  min-height: 0; /* 🛑 关键：防止视频过大撑破布局 */
+}
+
+.monitor-player-box {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   background: rgba(22, 33, 52, 0.9);
   border: 1px solid rgba(64, 158, 255, 0.3);
-  border-radius: 10px;
-  overflow: hidden;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  border-radius: 12px;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden; /* 🛑 确保子元素不溢出圆角 */
 }
 
-.video-card:hover {
-  border-color: rgba(64, 158, 255, 0.6);
-  box-shadow: 0 0 30px rgba(64, 158, 255, 0.2);
-  transform: translateY(-2px);
-}
-
-.video-card.offline {
-  border-color: rgba(245, 108, 108, 0.3);
-}
-
-.video-card.offline:hover {
-  border-color: rgba(245, 108, 108, 0.6);
-  box-shadow: 0 0 30px rgba(245, 108, 108, 0.2);
-}
-
-.video-card .card-header {
+.player-header {
+  height: 50px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 15px;
-  background: linear-gradient(90deg, rgba(64, 158, 255, 0.1) 0%, transparent 100%);
+  padding: 0 20px;
+  background: linear-gradient(90deg, rgba(64, 158, 255, 0.15) 0%, transparent 100%);
   border-bottom: 1px solid rgba(64, 158, 255, 0.2);
 }
 
-.device-name {
+.header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
+  gap: 12px;
 }
 
-.name-icon {
-  color: #409eff;
-}
-
-.device-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.device-status .status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.device-status.online .status-dot {
-  background: #67c23a;
-  box-shadow: 0 0 10px rgba(103, 194, 58, 0.8);
-  animation: pulse-green 2s infinite;
-}
-
-.device-status.online {
-  color: #67c23a;
-}
-
-.device-status.offline .status-dot {
+.live-badge {
   background: #f56c6c;
-  box-shadow: 0 0 10px rgba(245, 108, 108, 0.8);
-}
-
-.device-status.offline {
-  color: #f56c6c;
-}
-
-@keyframes pulse-green {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.video-container {
-  position: relative;
-  width: 100%;
-  height: 200px;
-  background: #000;
-  overflow: hidden;
-}
-
-.video-stream {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.offline-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.85);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #909399;
-}
-
-.offline-overlay svg {
-  opacity: 0.5;
-}
-
-.loading-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #409eff;
-  font-size: 13px;
-}
-
-.loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid rgba(64, 158, 255, 0.2);
-  border-top-color: #409eff;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.video-card .card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 15px;
-  background: rgba(0, 0, 0, 0.3);
-}
-
-.device-info {
-  display: flex;
-  gap: 8px;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
   font-size: 12px;
+  font-weight: bold;
+  animation: blink 2s infinite;
 }
 
-.info-label {
+.device-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.device-id {
+  font-size: 12px;
   color: #909399;
+  font-family: monospace;
 }
 
-.info-value {
-  color: #e4e7ed;
-  font-family: 'Courier New', monospace;
-}
-
-.device-actions {
+.header-status {
   display: flex;
+  align-items: center;
   gap: 6px;
+  font-size: 14px;
 }
 
-.device-actions .el-button {
-  padding: 6px;
-  min-height: 28px;
-  min-width: 28px;
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
 }
 
-.bottom-bar {
-  padding: 12px 30px;
-  background: linear-gradient(180deg, rgba(22, 33, 52, 0.8) 0%, rgba(22, 33, 52, 0.6) 100%);
-  border-top: 1px solid rgba(64, 158, 255, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.header-status.online { color: #67c23a; }
+.header-status.online .status-dot { background: #67c23a; box-shadow: 0 0 10px #67c23a; }
+.header-status.offline { color: #f56c6c; }
+.header-status.offline .status-dot { background: #f56c6c; }
+
+.player-content {
+  flex: 1;
+  background: #000;
   position: relative;
   overflow: hidden;
-}
-
-.scan-line {
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #409eff, transparent);
-  animation: scan 3s linear infinite;
-}
-
-@keyframes scan {
-  0% { left: -100%; }
-  100% { left: 100%; }
-}
-
-.copyright {
-  font-size: 12px;
-  color: #606266;
-  letter-spacing: 1px;
-}
-
-:deep(.el-dialog) {
-  background: #1a1f2e;
-  border: 1px solid rgba(64, 158, 255, 0.3);
-  border-radius: 10px;
-}
-
-:deep(.el-dialog__header) {
-  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
-  padding-bottom: 15px;
-}
-
-:deep(.el-dialog__title) {
-  color: #e4e7ed;
-}
-
-:deep(.el-form-item__label) {
-  color: #e4e7ed;
-}
-
-:deep(.el-input__wrapper),
-:deep(.el-textarea__inner) {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(64, 158, 255, 0.2);
-  box-shadow: none;
-  color: #e4e7ed;
-}
-
-:deep(.el-input__inner),
-:deep(.el-textarea__inner) {
-  color: #e4e7ed;
-}
-
-:deep(.el-input__inner::placeholder),
-:deep(.el-textarea__inner::placeholder) {
-  color: #606266;
-}
-
-.rtsp-tip {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 5px;
-}
-
-@media (max-width: 1200px) {
-  .side-panel {
-    display: none;
-  }
-}
-
-@media (max-width: 768px) {
-  .top-bar {
-    flex-direction: column;
-    gap: 15px;
-    padding: 15px;
-  }
-  
-  .status-section {
-    gap: 20px;
-  }
-  
-  .video-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* 全屏视频弹窗样式 */
-.fullscreen-dialog {
-  display: flex;
+  display: flex; /* 确保图片居中 */
   align-items: center;
   justify-content: center;
+  min-height: 0; /* 🛑 关键：再次确保图片不撑大容器 */
 }
 
-:deep(.fullscreen-dialog .el-dialog__body) {
-  padding: 0;
-  height: calc(100% - 100px);
-  overflow: hidden;
-}
-
-.fullscreen-video-container {
+.main-stream {
   width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #000;
+  /* ❌ 原来的写法：强制拉伸铺满 (会导致变形) */
+  /* object-fit: fill; */ 
+  
+  /* ✅ 修正写法：保持比例 (可能会有黑边，但画面正常) */
+  object-fit: contain; 
+  
+  /* 可选：如果你想要铺满且不变形 (会裁剪掉一部分画面边缘)，用 cover */
+  /* object-fit: cover; *//* 强制铺满 */
 }
-
-.fullscreen-device-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 15px 20px;
-  background: rgba(22, 33, 52, 0.95);
-  border-bottom: 1px solid rgba(64, 158, 255, 0.3);
-}
-
-.fullscreen-device-info h3 {
-  margin: 0;
-  font-size: 20px;
-  color: #e4e7ed;
-  font-weight: 600;
-}
-
-.fullscreen-device-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.fullscreen-device-status.online {
-  color: #67c23a;
-}
-
-.fullscreen-device-status.offline {
-  color: #f56c6c;
-}
-
-.fullscreen-video-wrapper {
-  flex: 1;
-  position: relative;
-  width: 100%;
-  height: calc(100% - 60px);
-  overflow: hidden;
-}
-
 .fullscreen-video-stream {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: contain; /* 保持全屏时也不变形 */
 }
 
-.fullscreen-offline-overlay {
+.player-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.85);
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.8);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 15px;
   color: #909399;
-  font-size: 18px;
+  z-index: 10;
 }
 
-.fullscreen-offline-overlay svg {
-  opacity: 0.7;
+.player-controls {
+  height: 60px;
+  background: rgba(10, 14, 23, 0.95);
+  border-top: 1px solid rgba(64, 158, 255, 0.2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+  flex-shrink: 0; /* 🛑 防止控制栏被压缩 */
+  position: relative; 
+  z-index: 20; /* 🛑 提高层级 */
 }
 
-.fullscreen-loading-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+.control-info {
+    color: #606266;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.control-group.right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255,255,255,0.1);
+  margin: 0 5px;
+}
+
+/* 右侧导航列表样式 */
+.device-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 自定义滚动条 */
+.device-list-scroll::-webkit-scrollbar { width: 4px; }
+.device-list-scroll::-webkit-scrollbar-thumb { background: rgba(64, 158, 255, 0.3); border-radius: 2px; }
+
+.device-nav-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.device-nav-item:hover {
+  background: rgba(64, 158, 255, 0.1);
+}
+
+.device-nav-item.active {
+  background: linear-gradient(90deg, rgba(64, 158, 255, 0.2) 0%, transparent 100%);
+  border-color: rgba(64, 158, 255, 0.5);
+  box-shadow: inset 2px 0 0 #409eff;
+}
+
+.nav-status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #67c23a;
+  box-shadow: 0 0 8px rgba(103, 194, 58, 0.5);
+  margin-right: 12px;
+}
+
+.device-nav-item.offline .nav-status-indicator {
+  background: #f56c6c;
+  box-shadow: none;
+}
+
+.nav-content {
+  flex: 1;
+}
+
+.nav-name {
+  font-size: 14px;
+  color: #fff;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.nav-sub {
+  font-size: 12px;
+  color: #909399;
+}
+
+.nav-arrow {
+  opacity: 0;
+  color: #409eff;
+  transform: translateX(-5px);
+  transition: all 0.2s;
+}
+
+.device-nav-item.active .nav-arrow {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* 空状态 */
+.empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 15px;
-  color: #409eff;
-  font-size: 18px;
+  height: 100%;
+  color: #606266;
+  gap: 20px;
 }
 
-:deep(.fullscreen-dialog) {
-  background: #1a1f2e;
-  border: 1px solid rgba(64, 158, 255, 0.3);
-  border-radius: 10px;
+/* 底部栏 */
+.bottom-bar {
+  padding: 10px 30px;
+  background: #0d1119;
+  border-top: 1px solid rgba(64, 158, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
 }
 
-:deep(.fullscreen-dialog .el-dialog__header) {
-  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
-  padding-bottom: 15px;
+/* 左侧栏样式补充 */
+.section-title {
+  display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #409eff; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(64, 158, 255, 0.2);
 }
-
-:deep(.fullscreen-dialog .el-dialog__title) {
-  color: #e4e7ed;
-  font-size: 18px;
-  font-weight: 600;
+.title-dot { width: 8px; height: 8px; background: #409eff; border-radius: 50%; box-shadow: 0 0 10px rgba(64, 158, 255, 0.8); }
+.status-list { display: flex; flex-direction: column; gap: 10px; }
+.status-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 8px; background: rgba(0, 0, 0, 0.3); border-radius: 4px; }
+.status-row.active .status-icon { color: #67c23a; }
+.status-row .status-icon { color: #909399; }
+.status-tag { margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(103, 194, 58, 0.2); color: #67c23a; }
+.status-tag.warning { background: rgba(230, 162, 60, 0.2); color: #e6a23c; }
+.action-buttons { display: flex; flex-direction: column; gap: 10px; }
+.action-buttons .el-button {
+  display: flex;       /* 确保内容居中 */
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  width: 100%;         /* 强制占满宽度 */
+  margin-left: 0 !important; /* 🛑 关键：清除 Element Plus 默认的左边距 */
+  margin-right: 0;     /* 保险起见，清除右边距 */
+  height: 36px;        /* 建议固定高度，视觉更统一 */
 }
+@keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-spinner.large { width: 60px; height: 60px; border-width: 4px; }
 
-:deep(.fullscreen-dialog .el-dialog__footer) {
-  border-top: 1px solid rgba(64, 158, 255, 0.2);
-  padding-top: 15px;
+/* 响应式 */
+@media (max-width: 1200px) {
+  .left-panel { display: none; }
 }
 </style>
