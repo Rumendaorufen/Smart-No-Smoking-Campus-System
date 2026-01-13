@@ -62,17 +62,26 @@ class StreamLoader:
         """只在 _reader_thread 内部调用，确保线程安全"""
         try:
             if self.cap: 
-                self.cap.release() # 先释放旧的
+                self.cap.release()
             
-            # 配置环境变量放在这里只是双重保险，建议在 run.py 全局设置
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|buffer_size;1024"
+            # 🛑 核心修改：优化 FFmpeg 参数
+            # rtsp_transport;tcp  -> 强制使用 TCP (解决花屏、丢包、绿屏的关键)
+            # stimeout;20000000   -> 设置 socket 超时时间为 20秒 (单位微秒)，防止连不上时卡死
+            # buffer_size;10240   -> 增加内部缓冲区到 10MB，防止高清帧太大被截断
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;20000000|buffer_size;10240"
             
             self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+            
             if self.cap.isOpened():
-                # 关键：禁用内部多线程，防止 fctx->async_lock 错误
+                # 禁用内部多线程 (防止崩溃)
                 self.cap.set(cv2.CAP_PROP_N_THREADS, 1)
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                logger.info(f"✅ Cam {self.camera_id} Connected.")
+                
+                # 🛑 修改：不要把 Buffer 设为 1 了，稍微给一点余量
+                # 在网络波动时，设为 1 容易导致直接丢帧报错
+                # 设为 3 可以在 "极低延迟" 和 "画面完整性" 之间找个平衡
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+                
+                logger.info(f"✅ Cam {self.camera_id} Connected (TCP Mode).")
                 return True
         except Exception as e:
             logger.error(f"Connection error: {e}")
