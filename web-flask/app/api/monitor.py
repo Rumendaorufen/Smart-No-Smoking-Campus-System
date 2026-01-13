@@ -12,6 +12,7 @@ monitor_bp = Blueprint('monitor', __name__)
 # ==========================================
 
 @monitor_bp.route('/devices', methods=['GET'])
+@jwt_required() # <--- 加上这一行，前端不传 Token 就会报 401
 def get_devices():
     """获取设备列表"""
     try:
