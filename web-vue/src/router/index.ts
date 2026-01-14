@@ -4,6 +4,7 @@ import Monitor from '../views/Monitor.vue'
 // 1. 引入新页面
 import UserManage from '../views/UserManage.vue'
 import { ElMessage } from 'element-plus'
+import DeviceManage from '../views/DeviceManage.vue'
 
 const routes = [
   {
@@ -24,6 +25,12 @@ const routes = [
     name: 'Login',
     component: Login,
     meta: { title: '登录' }
+  },
+  {
+    path: '/devices',
+    name: 'DeviceManage',
+    component: DeviceManage,
+    meta: { title: '设备管理', roles: ['admin'] } // 权限控制
   }
 ]
 

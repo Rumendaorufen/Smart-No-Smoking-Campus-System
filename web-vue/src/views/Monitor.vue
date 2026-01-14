@@ -32,16 +32,27 @@
         </div>
 
         <div class="user-actions">
-          <el-button 
-            v-if="isAdmin" 
-            type="warning" 
-            size="small" 
-            class="action-btn"
-            @click="$router.push('/users')"
-          >
-            <el-icon><Setting /></el-icon>
-            用户管理
-          </el-button>
+          <template v-if="isAdmin">
+            <el-button 
+              type="primary" 
+              size="small" 
+              class="action-btn"
+              @click="$router.push('/devices')"
+            >
+              <el-icon><VideoCameraFilled /></el-icon>
+              设备管理
+            </el-button>
+
+            <el-button 
+              type="warning" 
+              size="small" 
+              class="action-btn"
+              @click="$router.push('/users')"
+            >
+              <el-icon><Setting /></el-icon>
+              用户管理
+            </el-button>
+          </template>
 
           <el-button 
             type="info" 
@@ -75,11 +86,6 @@
               <span>数据采集</span>
               <span class="status-tag">运行中</span>
             </div>
-            <div class="status-row active">
-              <span class="status-icon">●</span>
-              <span>智能分析</span>
-              <span class="status-tag">运行中</span>
-            </div>
           </div>
         </div>
         
@@ -92,16 +98,6 @@
             <el-button type="primary" size="small" @click="refreshDevices">
               <el-icon><Refresh /></el-icon>
               刷新设备
-            </el-button>
-            
-            <el-button 
-              v-if="isAdmin" 
-              type="success" 
-              size="small" 
-              @click="addDevice"
-            >
-              <el-icon><Plus /></el-icon>
-              添加设备
             </el-button>
           </div>
         </div>
@@ -119,7 +115,9 @@
         <div v-if="currentDevice" class="monitor-player-box" :class="{ 'offline': currentDevice.status !== 1 }">
           <div class="player-header">
             <div class="header-left">
-              <span class="live-badge">LIVE</span>
+              <span v-if="currentDevice.status === 1" class="live-badge">LIVE</span>
+              <span v-else class="offline-badge">OFFLINE</span>
+              
               <span class="device-title">{{ currentDevice.name }}</span>
               <span class="device-id">ID: {{ currentDevice.id }}</span>
             </div>
@@ -131,6 +129,7 @@
 
           <div class="player-content">
             <img 
+              v-if="currentDevice.status === 1"
               :src="getStreamUrl(currentDevice.id)" 
               alt="监控画面" 
               class="main-stream"
@@ -138,13 +137,16 @@
               @load="handleVideoLoaded(currentDevice.id)"
             >
             
-            <div v-if="currentDevice.status !== 1" class="player-overlay offline">
+            <div v-else class="player-overlay offline">
               <el-icon :size="64"><VideoCameraFilled /></el-icon>
               <div class="overlay-text">设备离线</div>
-              <div class="overlay-sub">请检查网络或RTSP配置</div>
+              <div class="overlay-sub">等待信号恢复...</div>
+              <el-button type="primary" link @click="refreshDevices" style="margin-top:10px">
+                尝试刷新状态
+              </el-button>
             </div>
             
-            <div v-else-if="currentDevice.isLoading" class="player-overlay loading">
+            <div v-if="currentDevice.status === 1 && currentDevice.isLoading" class="player-overlay loading">
               <div class="loading-spinner large"></div>
               <div class="overlay-text">正在连接视频流...</div>
             </div>
@@ -157,17 +159,6 @@
                 </div>
             </div>
             <div class="control-group right">
-              <template v-if="isAdmin">
-                <el-button type="primary" plain size="default" @click="editDevice(currentDevice)">
-                  <el-icon><Edit /></el-icon> 编辑
-                </el-button>
-                
-                <el-button type="danger" plain size="default" @click="deleteDevice(currentDevice.id)">
-                  <el-icon><Delete /></el-icon> 删除
-                </el-button>
-                <div class="divider"></div>
-              </template>
-
               <el-button type="primary" circle size="large" @click="viewFullScreen(currentDevice.id)" title="全屏沉浸模式">
                 <el-icon><FullScreen /></el-icon>
               </el-button>
@@ -178,7 +169,6 @@
         <div v-else class="empty-state">
           <el-icon :size="80" color="#606266"><Monitor /></el-icon>
           <p>暂无选中设备，请从右侧列表选择</p>
-          <el-button v-if="isAdmin" type="primary" @click="addDevice">立即添加</el-button>
         </div>
       </div>
       
@@ -215,41 +205,16 @@
     
     <div class="bottom-bar">
       <div class="scan-line"></div>
-      <span class="copyright">© 2026 智慧校园禁烟监控系统 | 技术支持：智能视觉分析技术</span>
+      <span class="copyright">© 2026 智慧校园禁烟监控系统</span>
     </div>
 
     <el-dialog v-model="fullScreenDialogVisible" title="全屏监控" width="95%" top="2vh" class="fullscreen-dialog" :close-on-click-modal="false">
       <div class="fullscreen-video-container">
         <div v-if="fullScreenDevice" style="width:100%; height:100%">
-          <img :src="getStreamUrl(fullScreenDevice.id)" class="fullscreen-video-stream">
+          <img v-if="fullScreenDevice.status === 1" :src="getStreamUrl(fullScreenDevice.id)" class="fullscreen-video-stream" @error="handleVideoError(fullScreenDevice.id)">
+          <div v-else class="fullscreen-offline">设备离线</div>
         </div>
       </div>
-    </el-dialog>
-
-    <el-dialog v-model="addDeviceDialogVisible" title="添加设备" width="500px" :close-on-click-modal="false">
-      <el-form :model="addDeviceForm" label-width="100px">
-        <el-form-item label="设备名称" required><el-input v-model="addDeviceForm.name" /></el-form-item>
-        <el-form-item label="RTSP地址" required>
-          <el-input v-model="addDeviceForm.rtsp_url" type="textarea" rows="2" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="addDeviceDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitAddDevice">确定</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="editDeviceDialogVisible" title="编辑设备" width="500px" :close-on-click-modal="false">
-      <el-form :model="editDeviceForm" label-width="100px">
-        <el-form-item label="设备名称" required><el-input v-model="editDeviceForm.name" /></el-form-item>
-        <el-form-item label="RTSP地址" required>
-          <el-input v-model="editDeviceForm.rtsp_url" type="textarea" rows="2" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="editDeviceDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitEditDevice">确定</el-button>
-      </template>
     </el-dialog>
   </div>
 </template>
@@ -270,24 +235,18 @@ const devices = ref<any[]>([])
 const currentDevice = ref<any>(null)
 
 // 状态管理
-const addDeviceDialogVisible = ref(false)
-const editDeviceDialogVisible = ref(false)
 const fullScreenDialogVisible = ref(false)
 const fullScreenDevice = ref<any>(null)
-const currentEditingDeviceId = ref<number | null>(null)
 const streamVersion = ref(0)
 const currentTime = ref('')
 const currentDate = ref('')
 
-const addDeviceForm = ref({ name: '', rtsp_url: '' })
-const editDeviceForm = ref({ name: '', rtsp_url: '' })
-
 let timeTimer: any = null
+let pollTimer: any = null // 轮询定时器
 
-// ✅ 权限逻辑核心
+// 权限逻辑
 const userInfoStr = localStorage.getItem('userInfo')
 const currentUser = userInfoStr ? JSON.parse(userInfoStr) : { role: 'user', username: 'Guest' }
-
 const isAdmin = computed(() => currentUser.role === 'admin')
 const username = computed(() => currentUser.username || 'User')
 
@@ -296,46 +255,56 @@ const offlineCount = computed(() => devices.value.filter(d => d.status !== 1).le
 
 // 退出登录
 const handleLogout = async () => {
-  ElMessageBox.confirm('确定要退出系统吗?', '提示', {
-    type: 'info'
-  }).then(async () => {
-    // 调用后端接口(可选)
+  ElMessageBox.confirm('确定要退出系统吗?', '提示', { type: 'info' }).then(async () => {
     try { await authApi.logout() } catch(e) {}
-    // 清除本地缓存
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
-    ElMessage.success('已退出登录')
     router.push('/login')
   }).catch(() => {})
 }
 
 // 切换设备
 const switchDevice = (device: any) => {
-  currentDevice.value = device
+  // 如果切换了设备，先设为 loading，等待图片加载
+  if (currentDevice.value?.id !== device.id) {
+    device.isLoading = true
+    currentDevice.value = device
+  }
 }
 
-// 加载设备列表
-const loadDevices = async () => {
+// 加载设备列表 (核心轮询逻辑)
+const loadDevices = async (isSilent = true) => {
   try {
     const response = await deviceApi.getDevices()
     if (response.code === 200) {
-      devices.value = response.data.map((device: any) => ({
-        ...device,
+      const newDevices = response.data
+      
+      // 更新列表
+      devices.value = newDevices.map((d: any) => ({
+        ...d,
         isLoading: false
       }))
-      
-      // 自动选中逻辑
-      if (devices.value.length > 0) {
-        if (!currentDevice.value || !devices.value.find(d => d.id === currentDevice.value.id)) {
-          const firstOnline = devices.value.find(d => d.status === 1)
-          currentDevice.value = firstOnline || devices.value[0]
-        } else {
-          // 更新当前设备状态
-          const updatedCurrent = devices.value.find(d => d.id === currentDevice.value.id)
-          if(updatedCurrent) currentDevice.value = updatedCurrent
+
+      // 🛑 核心修复：必须同步更新 currentDevice 的状态
+      // 如果当前选中的设备状态变了(例如从在线变离线)，必须立即反应到 currentDevice 上
+      if (currentDevice.value) {
+        const found = devices.value.find(d => d.id === currentDevice.value.id)
+        if (found) {
+          // 如果状态发生了变化 (例如 1 -> 0)
+          if (currentDevice.value.status !== found.status) {
+             currentDevice.value.status = found.status
+             // 如果变成离线，强制触发 Vue 重新渲染
+             if (found.status === 0) {
+                console.log('设备掉线，强制更新视图')
+             }
+          }
         }
-      } else {
-        currentDevice.value = null
+      }
+
+      // 初始化选中
+      if (!currentDevice.value && devices.value.length > 0) {
+        const firstOnline = devices.value.find(d => d.status === 1)
+        currentDevice.value = firstOnline || devices.value[0]
       }
     }
   } catch (error) {
@@ -345,33 +314,33 @@ const loadDevices = async () => {
 
 // 刷新设备
 const refreshDevices = () => {
-  loadDevices()
-  streamVersion.value++
-  ElMessage.success('列表已刷新')
+  loadDevices(false)
+  streamVersion.value++ // 强制刷新图片缓存
+  ElMessage.success('状态已刷新')
 }
 
-// 获取视频流地址 (Flask后端)
+// 获取视频流地址
 const getStreamUrl = (deviceId: number) => {
-  // 注意：这里需要 VITE_API_BASE_URL 指向后端根地址(例如 http://localhost:5000)
-  // 如果你的 VITE_API_BASE_URL 带了 /api/v1，这里可能需要调整字符串替换
-  // 假设 .env 中 VITE_API_BASE_URL = http://localhost:5000/api/v1
   return `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${deviceId}?v=${streamVersion.value}`
 }
 
-// 视频流状态处理
+// 🛑 核心修复：当前端 <img @error> 触发时（说明流断了），前端主动设为离线
 const handleVideoError = (deviceId: number) => {
+  console.log(`视频流连接断开: ID ${deviceId}`)
   const device = devices.value.find(d => d.id === deviceId)
   if (device) {
-    device.status = 0
-    if (currentDevice.value && currentDevice.value.id === deviceId) currentDevice.value.status = 0
+    device.status = 0 // 前端先置为离线，避免卡在画面
+    // 同步 currentDevice
+    if (currentDevice.value && currentDevice.value.id === deviceId) {
+      currentDevice.value.status = 0
+    }
   }
 }
 
 const handleVideoLoaded = (deviceId: number) => {
   const device = devices.value.find(d => d.id === deviceId)
   if (device) {
-    device.status = 1
-    if (currentDevice.value && currentDevice.value.id === deviceId) currentDevice.value.status = 1
+    device.isLoading = false
   }
 }
 
@@ -383,16 +352,19 @@ const updateTime = () => {
 }
 
 onMounted(() => {
-  loadDevices()
+  loadDevices(false)
   updateTime()
   timeTimer = setInterval(updateTime, 1000)
+  // 🛑 启动轮询：每3秒同步一次后端数据库状态
+  pollTimer = setInterval(() => loadDevices(true), 3000)
 })
 
 onUnmounted(() => {
   if (timeTimer) clearInterval(timeTimer)
+  if (pollTimer) clearInterval(pollTimer)
 })
 
-// 功能操作
+// 全屏
 const viewFullScreen = (deviceId: number) => {
   const device = devices.value.find(d => d.id === deviceId)
   if (device) {
@@ -400,81 +372,14 @@ const viewFullScreen = (deviceId: number) => {
     fullScreenDialogVisible.value = true
   }
 }
-
-const editDevice = (device: any) => {
-  currentEditingDeviceId.value = device.id
-  editDeviceForm.value = { name: device.name, rtsp_url: device.rtsp_url }
-  editDeviceDialogVisible.value = true
-}
-
-const submitEditDevice = async () => {
-  if (!editDeviceForm.value.name || !editDeviceForm.value.rtsp_url) return ElMessage.warning('请填写完整')
-  try {
-    if (!currentEditingDeviceId.value) return
-    const res = await deviceApi.updateDevice(currentEditingDeviceId.value, editDeviceForm.value)
-    if (res.code === 200) {
-      ElMessage.success('更新成功')
-      editDeviceDialogVisible.value = false
-      streamVersion.value++
-      loadDevices()
-    }
-  } catch (error) {}
-}
-
-const deleteDevice = (deviceId: number) => {
-  ElMessageBox.confirm('确定要删除该设备吗？', '警告', {
-    type: 'warning'
-  }).then(async () => {
-    const res = await deviceApi.deleteDevice(deviceId)
-    if (res.code === 200) {
-      ElMessage.success('删除成功')
-      if (currentDevice.value && currentDevice.value.id === deviceId) currentDevice.value = null
-      loadDevices()
-    }
-  }).catch(() => {})
-}
-
-const addDevice = () => {
-  addDeviceForm.value = { name: '', rtsp_url: '' }
-  addDeviceDialogVisible.value = true
-}
-
-const submitAddDevice = async () => {
-  if (!addDeviceForm.value.name || !addDeviceForm.value.rtsp_url) return ElMessage.warning('请填写完整')
-  try {
-    const res = await deviceApi.addDevice(addDeviceForm.value)
-    if (res.code === 200) {
-      ElMessage.success('添加成功')
-      addDeviceDialogVisible.value = false
-      loadDevices()
-    }
-  } catch (error) {}
-}
 </script>
 
 <style scoped>
-/* 保持原有深色科技风样式 */
-.monitor-screen {
-  height: 100vh;
-  background: linear-gradient(135deg, #0a0e17 0%, #1a1f2e 50%, #0d1119 100%);
-  color: #e4e7ed;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+/* 保持原有样式，增加 offline 样式 */
+.monitor-screen { height: 100vh; background: linear-gradient(135deg, #0a0e17 0%, #1a1f2e 50%, #0d1119 100%); color: #e4e7ed; display: flex; flex-direction: column; overflow: hidden; }
 
 /* 顶部栏 */
-.top-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 30px;
-  height: 70px;
-  background: rgba(22, 33, 52, 0.95);
-  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
-  flex-shrink: 0;
-}
-
+.top-bar { display: flex; justify-content: space-between; align-items: center; padding: 0 30px; height: 70px; background: rgba(22, 33, 52, 0.95); border-bottom: 1px solid rgba(64, 158, 255, 0.2); flex-shrink: 0; }
 .logo-section { display: flex; align-items: center; gap: 12px; }
 .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, #409eff 0%, #67c23a 100%); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 0 15px rgba(64, 158, 255, 0.4); }
 .system-title { font-size: 20px; font-weight: 600; background: linear-gradient(90deg, #409eff, #67c23a); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; }
@@ -508,7 +413,6 @@ const submitAddDevice = async () => {
 .status-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; }
 .status-row .status-icon { color: #67c23a; }
 .status-tag { margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(103, 194, 58, 0.2); color: #67c23a; }
-
 .action-buttons { display: flex; flex-direction: column; gap: 10px; }
 .action-buttons .el-button { width: 100%; margin: 0; justify-content: center; }
 
@@ -522,10 +426,13 @@ const submitAddDevice = async () => {
 /* 中间大屏 */
 .center-monitor { flex: 1; background: rgba(0,0,0,0.2); border-radius: 12px; overflow: hidden; position: relative; display: flex; flex-direction: column; }
 .monitor-player-box { width: 100%; height: 100%; display: flex; flex-direction: column; background: rgba(22, 33, 52, 0.8); border: 1px solid rgba(64, 158, 255, 0.3); border-radius: 12px; overflow: hidden; }
+.monitor-player-box.offline { border-color: #f56c6c; background: rgba(40, 10, 10, 0.8); }
 
 .player-header { height: 50px; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; background: linear-gradient(90deg, rgba(64,158,255,0.1) 0%, transparent 100%); }
 .header-left { display: flex; align-items: center; gap: 12px; }
 .live-badge { background: #f56c6c; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; animation: blink 2s infinite; }
+.offline-badge { background: #909399; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+
 .device-title { font-size: 18px; font-weight: 600; }
 .device-id { color: #909399; font-family: monospace; }
 .header-status { display: flex; align-items: center; gap: 6px; font-size: 14px; }
@@ -540,7 +447,6 @@ const submitAddDevice = async () => {
 .player-controls { height: 60px; background: rgba(10, 14, 23, 0.9); border-top: 1px solid rgba(64,158,255,0.2); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; z-index: 20; }
 .control-info { color: #606266; font-size: 12px; font-family: monospace; }
 .control-group.right { display: flex; gap: 15px; align-items: center; }
-.divider { width: 1px; height: 24px; background: rgba(255,255,255,0.1); }
 
 /* 右侧列表 */
 .device-list-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 5px; }
@@ -564,8 +470,8 @@ const submitAddDevice = async () => {
 @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 .loading-spinner.large { width: 50px; height: 50px; border: 4px solid #409eff; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-/* 响应式 */
-@media (max-width: 1200px) { .left-panel { display: none; } }
 .fullscreen-video-stream { width: 100%; height: 100%; object-fit: contain; }
+.fullscreen-offline { display: flex; justify-content: center; align-items: center; height: 100%; font-size: 30px; color: #f56c6c; }
+
+@media (max-width: 1200px) { .left-panel { display: none; } }
 </style>
