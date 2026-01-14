@@ -36,5 +36,6 @@ class User(db.Model):
             'role': self.role,
             'status': self.status,  # ✅ 返回给前端，用于展示
             'last_login_time': self.last_login_time.strftime('%Y-%m-%d %H:%M:%S') if self.last_login_time else None,
-            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S')
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'last_login_ip': self.last_login_ip
         }

@@ -56,4 +56,9 @@ def create_app():
     from app.api.auth import auth_bp
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')
 
+    # ✅ 新增：注册用户管理蓝图
+    # 注意 URL 前缀是 /api/v1/users
+    from app.api.user import user_bp
+    app.register_blueprint(user_bp, url_prefix='/api/v1/users')
+
     return app

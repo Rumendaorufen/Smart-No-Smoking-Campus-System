@@ -1,13 +1,23 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
-import Monitor from '../views/Monitor.vue' 
+import Monitor from '../views/Monitor.vue'
+// 1. 引入新页面
+import UserManage from '../views/UserManage.vue'
+import { ElMessage } from 'element-plus'
 
 const routes = [
   {
     path: '/',
     name: 'Monitor',
     component: Monitor,
-    meta: { title: '实时监控', requiresAuth: true } // 标记需要登录
+    meta: { title: '实时监控' } // 所有人可看
+  },
+  {
+    path: '/users',
+    name: 'UserManage',
+    component: UserManage,
+    // 2. 标记：只有 admin 能进
+    meta: { title: '用户管理', roles: ['admin'] } 
   },
   {
     path: '/login',
@@ -22,28 +32,33 @@ const router = createRouter({
   routes
 })
 
-// 🚀 核心逻辑：全局前置守卫
 router.beforeEach((to, from, next) => {
-  // 1. 设置标题
   document.title = (to.meta.title as string) || '智慧校园禁烟监控系统'
-
-  // 2. 获取 Token
   const token = localStorage.getItem('token')
+  
+  // 获取当前用户信息字符串
+  const userInfoStr = localStorage.getItem('userInfo')
+  // 解析出对象 (防止为空)
+  const userInfo = userInfoStr ? JSON.parse(userInfoStr) : null
+  const userRole = userInfo ? userInfo.role : 'user'
 
-  // 3. 判断逻辑
-  if (to.path === '/login') {
-    // 如果已登录还想去登录页 -> 踢回首页 (可选，看你需要)
-    if (token) {
-      next('/') 
-    } else {
-      next() // 没登录去登录页 -> 放行
-    }
+  if (to.path !== '/login' && !token) {
+    next('/login')
+  } else if (to.path === '/login' && token) {
+    next('/')
   } else {
-    // 如果去的不是登录页
-    if (token) {
-      next() // 有 Token -> 放行
+    // 3. 权限校验逻辑
+    if (to.meta.roles) {
+      // 如果路由配置了 roles 数组，检查当前用户角色是否在其中
+      const requiredRoles = to.meta.roles as string[]
+      if (requiredRoles.includes(userRole)) {
+        next() // 有权限，放行
+      } else {
+        ElMessage.error('权限不足，无法访问该页面')
+        next('/') // 没权限，踢回首页
+      }
     } else {
-      next('/login') // ❌ 没有 Token -> 强制跳转登录页
+      next() // 没配置权限要求的页面，直接放行
     }
   }
 })
