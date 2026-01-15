@@ -28,6 +28,14 @@ class SmokeEvent:
         self.frame_count = 0     
         self.is_confirmed = False 
 
+GLOBAL_DETECTOR = None
+
+def get_shared_detector():
+    global GLOBAL_DETECTOR
+    if GLOBAL_DETECTOR is None:
+        print("🏗️ [System] 正在初始化全局 AI 模型 (单例模式)...")
+        GLOBAL_DETECTOR = SmokingDetector()
+    return GLOBAL_DETECTOR
 # ==========================================
 # StreamLoader: 单个摄像头的管理单元
 # ==========================================
@@ -39,7 +47,7 @@ class StreamLoader:
         self.lock = threading.Lock()
         
         # AI & 录像组件
-        self.detector = SmokingDetector()
+        self.detector = get_shared_detector()
         self.recorder = EvidenceRecorder(save_dir="app/static/evidence", fps=25, pre_record_sec=2)
         
         # 运行状态
@@ -203,9 +211,9 @@ class StreamLoader:
     def _watchdog_thread(self):
         """看门狗：监控 Reader 是否卡死 (最后的防线)"""
         while self.running:
-            # 如果超过 6 秒 (之前是15秒) 没有读取到新帧
-            # 缩短这里的时间，以便在完全没数据时更快反应
-            if time.time() - self.last_read_time > 6.0:
+            # 🛑 修改：从 6.0 改为 15.0
+            # 给 AI 处理和报警录像留足时间，防止误杀
+            if time.time() - self.last_read_time > 15.0:
                 if not self.reconnect_requested:
                     logger.warning(f"🚨 Cam {self.camera_id} Timeout/Frozen! Requesting restart...")
                     self.reconnect_requested = True

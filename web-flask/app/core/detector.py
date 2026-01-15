@@ -27,7 +27,7 @@ class SmokingDetector:
             self.device = 'cpu'
 
         # 烟头置信度阈值
-        self.conf_threshold = 0.3
+        self.conf_threshold = 0.6
 
     def detect(self, frame):
         detections = []
