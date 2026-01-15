@@ -1,3 +1,4 @@
+#web-flask\app\core\stream_loader.py
 import cv2
 import time
 import threading
@@ -61,19 +62,44 @@ class StreamLoader:
         # 🛑 新增：连续错误计数器
         self.consecutive_errors = 0
 
-    def start(self) -> bool:
-        self.running = True
-        threading.Thread(target=self._reader_thread, daemon=True).start()
-        threading.Thread(target=self._processor_thread, daemon=True).start()
-        threading.Thread(target=self._watchdog_thread, daemon=True).start()
-        return True
+        self.start_lock = threading.Lock() # ✅ 新增启动锁
 
+
+    def start(self) -> bool:
+        with self.start_lock: # ✅ 确保不会被重复启动
+            if self.running:
+                logger.warning(f"⚠️ Cam {self.camera_id} 已经在运行中，跳过启动")
+                return True
+                
+            self.running = True
+            logger.info(f"🚀 Cam {self.camera_id} 启动线程...")
+            
+            # 启动各个线程
+            threading.Thread(target=self._reader_thread, daemon=True).start()
+            threading.Thread(target=self._processor_thread, daemon=True).start()
+            threading.Thread(target=self._watchdog_thread, daemon=True).start()
+            return True
+
+   # ✅ 修改 1：增强版 stop 方法
     def stop(self):
-        self.running = False
+        logger.info(f"🛑 [StreamLoader] 收到停止指令: Cam {self.camera_id}")
+        self.running = False  # 1. 关掉总开关
+        
+        # 更新数据库状态
         self._update_db_status(0)
-        if self.cap: 
-            self.cap.release()
-            logger.info(f"🛑 Cam {self.camera_id} Stopped.")
+
+        # 2. ⚡️ 暴力释放资源，打断阻塞
+        with self.lock:
+            if self.cap:
+                try:
+                    # 这里的 release 通常会让正在进行的 grab/retrieve 抛出异常或返回 False
+                    self.cap.release()
+                except Exception as e:
+                    logger.error(f"⚠️ Release error: {e}")
+                finally:
+                    self.cap = None # 彻底置空
+        
+        logger.info(f"💀 [StreamLoader] 资源已释放: Cam {self.camera_id}")
 
     def _update_db_status(self, status):
         if not self.app: return
@@ -119,6 +145,10 @@ class StreamLoader:
             logger.warning(f"Cam {self.camera_id} init failed.")
 
         while self.running:
+            # 🛑 每次循环开始都检查一下是否被 stop 了
+            if not self.running:
+                break
+
             try:
                 # 响应看门狗
                 if self.reconnect_requested:
@@ -127,30 +157,35 @@ class StreamLoader:
                     self.reconnect_requested = False
                     self.last_read_time = time.time()
 
+                # 如果 cap 被 stop() 置空了，直接退出
                 if not self.cap or not self.cap.isOpened():
+                    if not self.running: break # 双重检查
                     time.sleep(2)
                     self._connect()
                     continue
                 
                 # 读取帧
-                grabbed = self.cap.grab()
-                
+                try:
+                    grabbed = self.cap.grab() # 这里可能会短暂阻塞
+                except Exception:
+                    # 如果 stop() 强行 release 了，这里会报错，正好退出
+                    break
+
+                if not self.running: break # grab 完再查一次
+
                 if grabbed:
                     ret, frame = self.cap.retrieve()
                     if ret and frame is not None and frame.size > 0:
                         with self.lock:
                             self.latest_frame = frame
-                            self.last_read_time = time.time() # 成功喂狗
-                            self.consecutive_errors = 0 # ✅ 成功读取，清零错误
+                            self.last_read_time = time.time()
+                            self.consecutive_errors = 0 
                     else:
-                        # 虽然 grab 成功，但解码失败 (那些 H264 error 就会走这里)
                         self.consecutive_errors += 1
                 else:
-                    # grab 直接失败
                     self.consecutive_errors += 1
                 
-                # 🛑 核心修复 2：主动熔断机制
-                # 如果连续 30 帧 (约1秒) 出现解码错误，不要等 Watchdog，直接自杀重启
+                # 主动熔断机制 (保持不变)
                 if self.consecutive_errors > 30:
                     logger.warning(f"⚡ Cam {self.camera_id} stream corruption detected! Force reconnecting...")
                     self.reconnect_requested = True
@@ -158,8 +193,12 @@ class StreamLoader:
                     time.sleep(0.5)
 
             except Exception as e:
-                logger.error(f"Reader loop error: {e}")
+                # 如果是我们要它停止的，就不报错
+                if self.running:
+                    logger.error(f"Reader loop error: {e}")
                 time.sleep(1)
+        
+        logger.info(f"👋 Reader Thread Exited: Cam {self.camera_id}")
 
     def _watchdog_thread(self):
         """看门狗：监控 Reader 是否卡死 (最后的防线)"""
@@ -292,31 +331,53 @@ class StreamLoader:
             return cv2.resize(self.latest_frame, (640, 360))
         return None
 
-# StreamManager 保持不变
+# web-flask/app/core/stream_loader.py 底部
+
 class StreamManager:
     def __init__(self):
         self.stream_loaders = {}
         self.app = None 
+        self.lock = threading.Lock() # ✅ 新增锁，防止并发添加导致覆盖
 
     def init_app(self, app):
         self.app = app
 
     def add_camera(self, cid, url):
-        if cid in self.stream_loaders and self.stream_loaders[cid].running:
-            return True
-        l = StreamLoader(cid, url, self.app)
-        if l.start(): 
-            self.stream_loaders[cid] = l
-            return True
-        return False
+        with self.lock: # ✅ 加锁，防止多线程同时操作字典
+            # 1. 检查是否存在旧实例
+            if cid in self.stream_loaders:
+                existing_loader = self.stream_loaders[cid]
+                
+                # 如果 URL 没变且正在运行，直接返回，别折腾
+                if existing_loader.rtsp_url == url and existing_loader.running:
+                    return True
+                
+                # 🛑 关键点：如果 URL 变了，或者实例是旧的，必须先杀掉旧线程！
+                # 否则这个旧线程就会变成僵尸，一直拉流且无法被删除
+                logger.info(f"🔄 [Manager] 替换旧实例: Cam {cid}")
+                existing_loader.stop()
+                del self.stream_loaders[cid] # 确保从字典移除
+            
+            # 2. 创建新实例
+            l = StreamLoader(cid, url, self.app)
+            if l.start(): 
+                self.stream_loaders[cid] = l
+                return True
+            return False
 
     def get_latest_frame(self, cid):
+        # 简单读取不需要锁，字典读取是原子的
         l = self.stream_loaders.get(cid)
         return l.get_latest_frame() if l else None
 
     def remove_camera(self, cid):
-        if cid in self.stream_loaders:
-            self.stream_loaders[cid].stop()
-            del self.stream_loaders[cid]
+        with self.lock: # ✅ 加锁
+            if cid in self.stream_loaders:
+                logger.info(f"🗑️ [Manager] Removing Camera ID: {cid}")
+                loader = self.stream_loaders[cid]
+                loader.stop() # 杀线程
+                del self.stream_loaders[cid] # 删引用
+            else:
+                logger.warning(f"⚠️ [Manager] 试图删除不存在的设备: {cid} (可能是僵尸线程)")
 
 stream_manager = StreamManager()
