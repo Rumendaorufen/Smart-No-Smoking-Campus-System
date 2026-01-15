@@ -40,7 +40,8 @@ export default {
   getStreamStatus: (deviceId: number) => {
     return request<any, ApiResponse<any>>({
       url: `/monitor/stream/status/${deviceId}`,
-      method: 'get'
+      method: 'get',
+      timeout: 30000
     })
   }
 }

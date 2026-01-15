@@ -21,7 +21,7 @@
         </div>
         <div class="status-item">
           <span class="status-label">监控区域</span>
-          <span class="status-value">{{ devices.length }}</span>
+          <span class="status-value">{{ deviceList.length }}</span>
         </div>
       </div>
       
@@ -99,6 +99,15 @@
               <el-icon><Refresh /></el-icon>
               刷新设备
             </el-button>
+            <el-button 
+              type="warning" 
+              size="small" 
+              @click="handleReconnectAll"
+              :loading="isGlobalRetrying"
+            >
+              <el-icon><Connection /></el-icon>
+              重连离线设备
+            </el-button>
           </div>
         </div>
 
@@ -138,11 +147,33 @@
             >
             
             <div v-else class="player-overlay offline">
-              <el-icon :size="64"><VideoCameraFilled /></el-icon>
-              <div class="overlay-text">设备离线</div>
-              <div class="overlay-sub">等待信号恢复...</div>
-              <el-button type="primary" link @click="refreshDevices" style="margin-top:10px">
-                尝试刷新状态
+              <el-icon :size="64" :class="{ 'spin-icon': currentDevice.isRetrying, 'error-icon': currentDevice.failTip }">
+                <component :is="currentDevice.isRetrying ? Loading : (currentDevice.failTip ? CircleCloseFilled : VideoCameraFilled)" />
+              </el-icon>
+              
+              <div class="overlay-text" :class="{ 'error-text': currentDevice.failTip }">
+                {{ currentDevice.isRetrying ? '正在检测连接...' : (currentDevice.failTip || '设备已离线') }}
+              </div>
+              
+              <div class="overlay-sub">
+                <template v-if="currentDevice.isRetrying">
+                    请稍候，正在与设备进行握手...
+                </template>
+                <template v-else-if="currentDevice.failTip">
+                    请检查设备 IP、端口或网络连通性
+                </template>
+                <template v-else>
+                    信号丢失，请检查线路或电源
+                </template>
+              </div>
+              
+              <el-button 
+                type="primary" 
+                :loading="currentDevice.isRetrying"
+                @click="retryConnection" 
+                style="margin-top:20px"
+              >
+                {{ currentDevice.failTip ? '再次尝试连接' : '尝试恢复连接' }}
               </el-button>
             </div>
             
@@ -176,11 +207,11 @@
         <div class="panel-section full-height">
           <div class="section-title">
             <span class="title-dot"></span>
-            监控列表 ({{ devices.length }})
+            监控列表 ({{ deviceList.length }})
           </div>
           <div class="device-list-scroll">
             <div 
-              v-for="device in devices" 
+              v-for="device in deviceList" 
               :key="device.id" 
               class="device-nav-item"
               :class="{ 
@@ -220,29 +251,40 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useDeviceStore } from '../stores/device' // ✅ 引入 Store
+import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
-  Setting, SwitchButton, Refresh, Plus, Edit, Delete, 
-  FullScreen, VideoCameraFilled, Monitor, ArrowRight 
+  Setting, SwitchButton, Refresh, Connection,
+  FullScreen, VideoCameraFilled, Monitor, ArrowRight, Loading, Warning,CircleCloseFilled
 } from '@element-plus/icons-vue'
-import deviceApi from '../api/device'
 import authApi from '../api/auth'
 
+const isGlobalRetrying = computed(() => {
+  return deviceList.value.some(d => d.isRetrying)
+})
+
+// 方法
+const handleReconnectAll = () => {
+  deviceStore.reconnectAll()
+}
+
 const router = useRouter()
-const devices = ref<any[]>([]) 
+// 使用 Store
+const deviceStore = useDeviceStore()
+const { deviceList } = storeToRefs(deviceStore)
+
 const currentDevice = ref<any>(null)
 
 // 状态管理
 const fullScreenDialogVisible = ref(false)
 const fullScreenDevice = ref<any>(null)
-const streamVersion = ref(0)
 const currentTime = ref('')
 const currentDate = ref('')
 
 let timeTimer: any = null
-let pollTimer: any = null // 轮询定时器
 
 // 权限逻辑
 const userInfoStr = localStorage.getItem('userInfo')
@@ -250,8 +292,8 @@ const currentUser = userInfoStr ? JSON.parse(userInfoStr) : { role: 'user', user
 const isAdmin = computed(() => currentUser.role === 'admin')
 const username = computed(() => currentUser.username || 'User')
 
-const onlineCount = computed(() => devices.value.filter(d => d.status === 1).length)
-const offlineCount = computed(() => devices.value.filter(d => d.status !== 1).length)
+const onlineCount = computed(() => deviceList.value.filter(d => d.status === 1).length)
+const offlineCount = computed(() => deviceList.value.filter(d => d.status !== 1).length)
 
 // 退出登录
 const handleLogout = async () => {
@@ -265,84 +307,40 @@ const handleLogout = async () => {
 
 // 切换设备
 const switchDevice = (device: any) => {
-  // 如果切换了设备，先设为 loading，等待图片加载
   if (currentDevice.value?.id !== device.id) {
-    device.isLoading = true
+    // 调用 Store 更新 loading 状态 (如果是 Pinia 管理，这会反应到 list 从而反应到 currentDevice)
+    deviceStore.updateDeviceState(device.id, { isLoading: true })
     currentDevice.value = device
   }
 }
 
-// 加载设备列表 (核心轮询逻辑)
-const loadDevices = async (isSilent = true) => {
-  try {
-    const response = await deviceApi.getDevices()
-    if (response.code === 200) {
-      const newDevices = response.data
-      
-      // 更新列表
-      devices.value = newDevices.map((d: any) => ({
-        ...d,
-        isLoading: false
-      }))
-
-      // 🛑 核心修复：必须同步更新 currentDevice 的状态
-      // 如果当前选中的设备状态变了(例如从在线变离线)，必须立即反应到 currentDevice 上
-      if (currentDevice.value) {
-        const found = devices.value.find(d => d.id === currentDevice.value.id)
-        if (found) {
-          // 如果状态发生了变化 (例如 1 -> 0)
-          if (currentDevice.value.status !== found.status) {
-             currentDevice.value.status = found.status
-             // 如果变成离线，强制触发 Vue 重新渲染
-             if (found.status === 0) {
-                console.log('设备掉线，强制更新视图')
-             }
-          }
-        }
-      }
-
-      // 初始化选中
-      if (!currentDevice.value && devices.value.length > 0) {
-        const firstOnline = devices.value.find(d => d.status === 1)
-        currentDevice.value = firstOnline || devices.value[0]
-      }
+// 代理到 Store 的方法
+const retryConnection = () => {
+    if (currentDevice.value) {
+        deviceStore.retryConnection(currentDevice.value.id)
     }
-  } catch (error) {
-    console.error(error)
-  }
 }
-
-// 刷新设备
 const refreshDevices = () => {
-  loadDevices(false)
-  streamVersion.value++ // 强制刷新图片缓存
-  ElMessage.success('状态已刷新')
+    deviceStore.streamVersion++
+    deviceStore.fetchDevices(false)
+    ElMessage.success('状态已刷新')
 }
+const getStreamUrl = (id: number) => deviceStore.getStreamUrl(id)
+const handleVideoError = (id: number) => deviceStore.handleVideoError(id)
+const handleVideoLoaded = (id: number) => deviceStore.updateDeviceState(id, { isLoading: false })
 
-// 获取视频流地址
-const getStreamUrl = (deviceId: number) => {
-  return `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${deviceId}?v=${streamVersion.value}`
-}
-
-// 🛑 核心修复：当前端 <img @error> 触发时（说明流断了），前端主动设为离线
-const handleVideoError = (deviceId: number) => {
-  console.log(`视频流连接断开: ID ${deviceId}`)
-  const device = devices.value.find(d => d.id === deviceId)
-  if (device) {
-    device.status = 0 // 前端先置为离线，避免卡在画面
-    // 同步 currentDevice
-    if (currentDevice.value && currentDevice.value.id === deviceId) {
-      currentDevice.value.status = 0
+// 监听 deviceList 变化，保持 currentDevice 指向最新对象
+watch(deviceList, (newList) => {
+  if (currentDevice.value) {
+    const updatedItem = newList.find(d => d.id === currentDevice.value.id)
+    if (updatedItem) {
+      currentDevice.value = updatedItem
     }
+  } else if (newList.length > 0) {
+    const firstOnline = newList.find(d => d.status === 1)
+    currentDevice.value = firstOnline || newList[0]
   }
-}
-
-const handleVideoLoaded = (deviceId: number) => {
-  const device = devices.value.find(d => d.id === deviceId)
-  if (device) {
-    device.isLoading = false
-  }
-}
+}, { deep: true })
 
 // 时间更新
 const updateTime = () => {
@@ -351,22 +349,23 @@ const updateTime = () => {
   currentDate.value = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
 }
 
+// 生命周期
 onMounted(() => {
-  loadDevices(false)
   updateTime()
   timeTimer = setInterval(updateTime, 1000)
-  // 🛑 启动轮询：每3秒同步一次后端数据库状态
-  pollTimer = setInterval(() => loadDevices(true), 3000)
+  // 启动全局轮询
+  deviceStore.startPolling()
 })
 
 onUnmounted(() => {
   if (timeTimer) clearInterval(timeTimer)
-  if (pollTimer) clearInterval(pollTimer)
+  // 停止轮询
+  deviceStore.stopPolling()
 })
 
 // 全屏
 const viewFullScreen = (deviceId: number) => {
-  const device = devices.value.find(d => d.id === deviceId)
+  const device = deviceList.value.find(d => d.id === deviceId)
   if (device) {
     fullScreenDevice.value = device
     fullScreenDialogVisible.value = true
@@ -375,7 +374,7 @@ const viewFullScreen = (deviceId: number) => {
 </script>
 
 <style scoped>
-/* 保持原有样式，增加 offline 样式 */
+/* 保持原有样式，增加 spin-icon 动画 */
 .monitor-screen { height: 100vh; background: linear-gradient(135deg, #0a0e17 0%, #1a1f2e 50%, #0d1119 100%); color: #e4e7ed; display: flex; flex-direction: column; overflow: hidden; }
 
 /* 顶部栏 */
@@ -405,6 +404,22 @@ const viewFullScreen = (deviceId: number) => {
 
 .panel-section { background: rgba(22, 33, 52, 0.6); border: 1px solid rgba(64, 158, 255, 0.1); border-radius: 8px; padding: 15px; backdrop-filter: blur(10px); }
 .panel-section.full-height { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 动画和错误样式 */
+.spin-icon {
+  animation: spin 1s linear infinite;
+  color: #409eff;
+}
+.error-icon {
+  color: #f56c6c;
+  animation: shake 0.4s ease-in-out;
+}
+.error-text {
+  color: #f56c6c !important;
+  font-weight: bold;
+}
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
 
 .section-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #409eff; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(64, 158, 255, 0.1); }
 .title-dot { width: 6px; height: 6px; background: #409eff; border-radius: 50%; }
@@ -469,7 +484,6 @@ const viewFullScreen = (deviceId: number) => {
 
 @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 .loading-spinner.large { width: 50px; height: 50px; border: 4px solid #409eff; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px; }
-@keyframes spin { to { transform: rotate(360deg); } }
 .fullscreen-video-stream { width: 100%; height: 100%; object-fit: contain; }
 .fullscreen-offline { display: flex; justify-content: center; align-items: center; height: 100%; font-size: 30px; color: #f56c6c; }
 

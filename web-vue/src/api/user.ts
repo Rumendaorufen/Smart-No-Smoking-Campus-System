@@ -1,6 +1,6 @@
 import request from '../utils/request'
 // ✅ 关键修改：加上 'type' 关键字
-import type { ApiResponse } from './device'
+import type { ApiResponse } from './auth'
 
 export default {
   // 获取用户列表

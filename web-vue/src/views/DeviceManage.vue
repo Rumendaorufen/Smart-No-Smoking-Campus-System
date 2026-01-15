@@ -47,9 +47,21 @@
     <div class="main-grid-area">
       <div class="grid-header">
         <span class="title">实时预览矩阵</span>
-        <el-button circle size="small" @click="refreshAll" title="刷新所有画面">
-          <el-icon><Refresh /></el-icon>
-        </el-button>
+        <div class="header-actions">
+           <el-button 
+             type="warning" 
+             size="small" 
+             plain 
+             @click="handleReconnectAll"
+             :loading="isGlobalRetrying"
+           >
+             <el-icon><Connection /></el-icon> 一键重连
+           </el-button>
+
+           <el-button circle size="small" @click="refreshAll" title="刷新所有画面">
+             <el-icon><Refresh /></el-icon>
+           </el-button>
+        </div>
       </div>
 
       <div class="video-grid" v-loading="loading">
@@ -70,12 +82,11 @@
           </div>
 
           <div class="card-video">
-  
             <img 
-                v-if="device.status === 1"
-                :src="getStreamUrl(device.id)" 
-                loading="lazy"
-                @error="handleVideoError(device)"
+              v-if="device.status === 1"
+              :src="getStreamUrl(device.id)" 
+              loading="lazy"
+              @error="handleVideoError(device)"
             />
 
             <div v-else-if="device.isRetrying" class="retry-mask">
@@ -84,16 +95,21 @@
             </div>
 
             <div v-else class="offline-placeholder">
-                <el-icon :size="48" class="offline-icon"><VideoCameraFilled /></el-icon>
-                <p class="offline-tip">信号中断</p>
+                <el-icon :size="48" class="offline-icon" :class="{ 'error-shake': device.failTip }">
+                    <component :is="device.failTip ? Warning : VideoCameraFilled" />
+                </el-icon>
+                
+                <p class="offline-tip" :class="{ 'error-text': device.failTip }">
+                    {{ device.failTip || '信号已中断' }}
+                </p>
                 
                 <button class="retry-btn" @click="retryStream(device)">
-                <el-icon class="icon"><RefreshRight /></el-icon>
-                点击重连
+                  <el-icon class="icon"><RefreshRight /></el-icon>
+                  {{ device.failTip ? '重试连接' : '点击重连' }}
                 </button>
             </div>
             
-            </div>
+          </div>
 
           <div class="card-footer">
             <div class="rtsp-info" :title="device.rtsp_url">
@@ -145,120 +161,61 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue' // ✅ 新增 onUnmounted
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useDeviceStore } from '../stores/device' // ✅ 引入 Store
+import { storeToRefs } from 'pinia'
 import deviceApi from '../api/device'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
-  Plus, Monitor, Edit, Delete, Refresh, VideoCameraFilled 
+  Plus, Monitor, Edit, Delete, Refresh, VideoCameraFilled, 
+  RefreshRight, Warning, Connection
 } from '@element-plus/icons-vue'
 
-interface DeviceVO {
-  id: number;
-  name: string;
-  rtsp_url: string;
-  status: number; // 1在线 0离线
-  created_at: string;
-  isRetrying?: boolean; // ✅ 新增：标记该设备是否正在重连
-  failTip?: string;     // ✅ 新增：专门存失败提示文案
+const isGlobalRetrying = computed(() => {
+  return deviceList.value.some(d => d.isRetrying)
+})
+
+const handleReconnectAll = () => {
+  deviceStore.reconnectAll()
 }
+// 使用 Pinia Store
+const deviceStore = useDeviceStore()
+// 使用 storeToRefs 保持响应性 (解构 state)
+const { deviceList, loading } = storeToRefs(deviceStore)
 
-const deviceList = ref<DeviceVO[]>([])
-const loading = ref(false)
-const streamVersion = ref(0) 
-
-// 弹窗相关
+// 弹窗相关 (UI 状态，无需存入 Pinia)
 const dialogVisible = ref(false)
 const dialogMode = ref<'add' | 'edit'>('add')
 const currentId = ref<number | null>(null)
 const form = ref({ name: '', rtsp_url: '' })
 
-// ✅ 新增：轮询定时器变量
-let pollTimer: any = null
-
-// 计算属性
+// 计算属性 (基于 Store 的数据)
 const onlineCount = computed(() => deviceList.value.filter(d => d.status === 1).length)
 const offlineCount = computed(() => deviceList.value.filter(d => d.status !== 1).length)
 
-// ✅ 改造：支持静默加载 (isSilent)
-// isSilent = true 时，不显示加载转圈，用于后台轮询
-const loadDevices = async (isSilent = false) => {
-  if (!isSilent) {
-    loading.value = true
-  }
-  
-  try {
-    const res = await deviceApi.getDevices()
-    if (res.code === 200) {
-      // 对比新旧数据，只有状态变了才会有视觉变化
-      deviceList.value = res.data
-    }
-  } catch (e) {
-    console.error(e)
-  } finally {
-    if (!isSilent) {
-      loading.value = false
-    }
-  }
-}
+// --- 方法：代理到 Store ---
 
-// 获取流地址
-const getStreamUrl = (id: number) => {
-  return `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${id}?v=${streamVersion.value}`
-}
-
-// 视频加载失败处理
-const handleVideoError = (device: DeviceVO) => {
-  if (device.status === 1) {
-    device.status = 0
-  }
-}
-
-// 手动刷新所有流
 const refreshAll = () => {
-  streamVersion.value = Date.now()
-  loadDevices(false) // 手动点击时，显示 loading 动画
+  deviceStore.streamVersion++
+  deviceStore.fetchDevices(false)
   ElMessage.success('正在刷新视频矩阵...')
 }
 
-// 尝试单个重连
-// 2. 重写重连逻辑：失败 0 延迟，成功才给一点动画缓冲
-const retryStream = async (device: DeviceVO) => {
-  // 1. 初始化状态
-  device.isRetrying = true;
-  device.failTip = ''; // 清空之前的错误
-  
-  try {
-    // 发起请求
-    const res = await deviceApi.getStreamStatus(device.id);
-
-    if (res.code === 200 && res.data.status === 1) {
-      // ✅ 成功分支：给 500ms 缓冲，让用户看清“连接成功”的动画，避免闪烁
-      setTimeout(() => {
-        device.status = 1;
-        device.isRetrying = false;
-        streamVersion.value++; 
-        loadDevices(true);
-      }, 500);
-    } else {
-      // ❌ 失败分支：不等待！立即显示错误
-      device.failTip = '无法连接设备'; // 设置错误文案
-      device.isRetrying = false;     // 立即停止转圈
-    }
-  } catch (e) {
-    // ❌ 网络错误：立即显示
-    device.failTip = '网络请求超时';
-    device.isRetrying = false;
-  }
+const retryStream = (device: any) => {
+  deviceStore.retryConnection(device.id)
 }
 
-// 滚动定位
-const scrollToCard = (id: number) => {
-  const el = document.getElementById(`card-${id}`)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+const getStreamUrl = (id: number) => {
+  return deviceStore.getStreamUrl(id)
 }
 
-// CRUD 操作 (保持不变)
-const openDialog = (mode: 'add' | 'edit', row?: DeviceVO) => {
+const handleVideoError = (device: any) => {
+  deviceStore.handleVideoError(device.id)
+}
+
+// --- CRUD 操作 (API 调用保留在这里，或者也可以移入 Store) ---
+
+const openDialog = (mode: 'add' | 'edit', row?: any) => {
   dialogMode.value = mode
   dialogVisible.value = true
   if (mode === 'edit' && row) {
@@ -282,44 +239,48 @@ const handleSubmit = async () => {
       if (res.code === 200) ElMessage.success('更新成功')
     }
     dialogVisible.value = false
-    loadDevices(false) // 提交后刷新显示 loading
-    streamVersion.value++
+    
+    // 操作成功后，刷新 Store 列表
+    deviceStore.fetchDevices(false) 
+    deviceStore.streamVersion++
   } catch (e) {}
 }
 
-const handleDelete = (row: DeviceVO) => {
+const handleDelete = (row: any) => {
   ElMessageBox.confirm(`确定删除 ${row.name}?`, '警告', { type: 'warning' })
     .then(async () => {
       const res = await deviceApi.deleteDevice(row.id)
       if (res.code === 200) {
         ElMessage.success('删除成功')
-        loadDevices(false)
+        deviceStore.fetchDevices(false)
       }
     }).catch(() => {})
 }
 
+// 辅助
+const scrollToCard = (id: number) => {
+  const el = document.getElementById(`card-${id}`)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 const formatTime = (timeStr: string) => {
   if(!timeStr) return ''
   return new Date(timeStr).toLocaleDateString()
 }
 
-// ✅ 生命周期管理
+// --- 生命周期 ---
 onMounted(() => {
-  loadDevices(false) // 第一次加载，显示 Loading
-  
-  // 启动轮询：每 3 秒悄悄请求一次最新状态
-  pollTimer = setInterval(() => {
-    loadDevices(true) // 这里的 true 表示静默加载，不闪烁
-  }, 3000)
+  // 进入页面，启动全局轮询
+  deviceStore.startPolling()
 })
 
 onUnmounted(() => {
-  // 离开页面时销毁定时器，否则会报错或占用资源
-  if (pollTimer) clearInterval(pollTimer)
+  // 离开页面，停止轮询 (防止后台跑流量)
+  deviceStore.stopPolling()
 })
 </script>
 
 <style scoped>
+/* 样式保持不变 */
 .device-manage-container {
   display: flex;
   height: 100vh;
@@ -362,22 +323,21 @@ onUnmounted(() => {
 
 .action-area {
   display: flex;
-  flex-direction: column; /* 垂直排列 */
-  gap: 15px;              /* 按钮之间的间距 */
+  flex-direction: column;
+  gap: 15px;
   margin-bottom: 30px;
-  width: 100%;            /* 确保容器占满 */
+  width: 100%;
 }
 
 .action-area .el-button {
-  width: 100%;            /* 让按钮撑满容器宽度 */
-  margin-left: 0 !important; /* 🛑 核心修复：清除 Element Plus 默认的左边距 */
+  width: 100%;
+  margin-left: 0 !important;
   margin-right: 0;
-  height: 40px;           /* 统一高度 */
-  justify-content: center; /*以此确保文字/图标居中 */
-  border-radius: 8px;     /* 可选：加一点圆角更好看 */
+  height: 40px;
+  justify-content: center;
+  border-radius: 8px;
 }
 
-/* 单独定制返回按钮样式 */
 .back-btn {
   background: transparent !important;
   border: 1px solid rgba(144, 147, 153, 0.5) !important;
@@ -391,7 +351,6 @@ onUnmounted(() => {
 }
 .mini-list-title { font-size: 12px; color: #606266; margin-bottom: 10px; font-weight: bold; }
 .mini-device-list { flex: 1; overflow-y: auto; padding-right: 5px; }
-/* 隐藏滚动条但保留功能 */
 .mini-device-list::-webkit-scrollbar { width: 4px; }
 .mini-device-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
@@ -431,7 +390,6 @@ onUnmounted(() => {
   padding: 30px;
   overflow-y: auto;
   display: grid;
-  /* 响应式网格：最小宽度300px，自动填满 */
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 20px;
   align-content: start;
@@ -469,7 +427,7 @@ onUnmounted(() => {
 .card-time { font-size: 12px; color: #606266; }
 
 .card-video {
-  height: 180px; /* 固定高度，保证网格整齐 */
+  height: 180px; 
   background: #000;
   position: relative;
   display: flex;
@@ -478,7 +436,17 @@ onUnmounted(() => {
 }
 .card-video img { width: 100%; height: 100%; object-fit: contain; }
 
-.offline-placeholder { text-align: center; color: #606266; font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.offline-placeholder { 
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    background: rgba(20, 20, 20, 0.6);
+    color: #606266;
+    gap: 8px;
+}
 
 .card-footer {
   padding: 10px 15px;
@@ -492,4 +460,76 @@ onUnmounted(() => {
   font-size: 12px; color: #555; width: 180px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* 错误文字样式 */
+.error-text {
+  color: #f56c6c !important;
+  font-weight: bold;
+}
+
+.offline-icon {
+  color: #4a4d52;
+  margin-bottom: 5px;
+  transition: color 0.3s;
+}
+
+.offline-icon.error-shake {
+  color: #f56c6c;
+  animation: shake 0.4s ease-in-out;
+}
+
+/* 重连按钮样式 */
+.retry-btn {
+  margin-top: 10px;
+  background: rgba(64, 158, 255, 0.1);
+  border: 1px solid rgba(64, 158, 255, 0.3);
+  color: #409eff;
+  padding: 6px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.3s;
+}
+
+.retry-btn:hover {
+  background: #409eff;
+  color: white;
+  border-color: #409eff;
+  box-shadow: 0 0 10px rgba(64, 158, 255, 0.4);
+}
+
+.retry-mask {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 5;
+}
+
+.retry-text {
+  margin-top: 15px;
+  font-size: 12px;
+  color: #409eff;
+  letter-spacing: 1px;
+  animation: pulse 1.5s infinite;
+}
+
+.radar-spinner {
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(64, 158, 255, 0.3);
+  border-top-color: #409eff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
 </style>

@@ -1,3 +1,4 @@
+#web-flask\app\models\devices.py
 from app.models import db  # ✅ 关键：使用全局统一的 db 实例
 from sqlalchemy.sql import func
 
