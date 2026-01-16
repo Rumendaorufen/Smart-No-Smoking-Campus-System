@@ -11,7 +11,7 @@
  Target Server Version : 80034 (8.0.34)
  File Encoding         : 65001
 
- Date: 12/01/2026 10:22:18
+ Date: 17/01/2026 01:08:06
 */
 
 SET NAMES utf8mb4;
@@ -37,11 +37,7 @@ CREATE TABLE `alarms`  (
   INDEX `idx_create_time`(`create_time` ASC) USING BTREE,
   INDEX `idx_audit_status`(`audit_status` ASC) USING BTREE,
   CONSTRAINT `fk_alarms_devices` FOREIGN KEY (`camera_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '报警记录表' ROW_FORMAT = Dynamic;
-
--- ----------------------------
--- Records of alarms
--- ----------------------------
+) ENGINE = InnoDB AUTO_INCREMENT = 101 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '报警记录表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for devices
@@ -56,12 +52,23 @@ CREATE TABLE `devices`  (
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `status` int NULL DEFAULT 1,
   PRIMARY KEY (`id`) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 17 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '设备表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 41 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '设备表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
--- Records of devices
+-- Table structure for users
 -- ----------------------------
-INSERT INTO `devices` VALUES (14, '手机1', 'rtsp://admin:admin@192.168.1.3:8554/live', NULL, '2026-01-10 16:04:01', '2026-01-12 09:57:04', 1);
-INSERT INTO `devices` VALUES (16, '手机2', 'rtsp://admin:admin@192.168.1.5:8554/live', NULL, '2026-01-12 10:00:41', '2026-01-12 10:00:41', 1);
+DROP TABLE IF EXISTS `users`;
+CREATE TABLE `users`  (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT '用户主键',
+  `username` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '登录账号',
+  `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '加密后的密码',
+  `role` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'user' COMMENT '角色: admin-管理员, user-普通用户',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '状态: 1-启用, 0-禁用',
+  `last_login_ip` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '最后登录IP',
+  `last_login_time` datetime NULL DEFAULT NULL COMMENT '最后登录时间',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uk_username`(`username` ASC) USING BTREE COMMENT '账号唯一索引'
+) ENGINE = InnoDB AUTO_INCREMENT = 3 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '用户表' ROW_FORMAT = DYNAMIC;
 
 SET FOREIGN_KEY_CHECKS = 1;

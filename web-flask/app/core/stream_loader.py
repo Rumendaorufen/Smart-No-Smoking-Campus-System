@@ -275,10 +275,23 @@ class StreamLoader:
         prefix = f"alarm_p{owner_id}" if owner_id else "alarm_unknown"
         ts = int(time.time())
         video_name = f"{prefix}_{ts}.mp4"
+        
+        # 开始录制视频
         video_path = self.recorder.start_recording(video_name, post_record_sec=5, width=w, height=h)
+        
+        # 保存截图
         img_name = f"{prefix}_{ts}.jpg"
         roi_path = self.recorder.save_snapshot(frame, img_name)
-        threading.Thread(target=self._save_alarm_to_db, args=(conf, video_path, roi_path)).start()
+        
+        # 🛑 关键修改：传递真实的 app 对象给子线程
+        # 这里的 self.app 是在 __init__ 里传进来的 Flask app 实例
+        if self.app:
+            threading.Thread(
+                target=self._save_alarm_to_db, 
+                args=(self.app, conf, video_path, roi_path) # 👈 把 app 传过去
+            ).start()
+        else:
+            logger.error("❌ App context is missing, cannot save alarm to DB")
 
     def _match_person_id(self, c_box, persons):
         c_cx, c_cy = (c_box[0]+c_box[2])/2, (c_box[1]+c_box[3])/2
@@ -295,16 +308,31 @@ class StreamLoader:
                 best_id = p['id']
         return best_id
 
-    def _save_alarm_to_db(self, confidence, video_path, roi_path):
-        if not self.app: return
+    # 🛑 关键修改：接收 app 参数，并手动推送上下文
+    def _save_alarm_to_db(self, app, confidence, video_path, roi_path):
         try:
-            video_rel = "static/evidence/" + os.path.basename(video_path) if video_path else ""
-            with self.app.app_context():
-                alarm = Alarms(camera_id=self.camera_id, type='SMOKING', confidence=confidence, video_url=video_rel, roi_url=roi_path)
+            # 必须使用 with app.app_context(): 才能在线程里操作 DB
+            with app.app_context():
+                video_rel = "static/evidence/" + os.path.basename(video_path) if video_path else ""
+                roi_rel = "static/evidence/" + os.path.basename(roi_path) if roi_path else ""
+                
+                alarm = Alarms(
+                    camera_id=self.camera_id, 
+                    type='SMOKING', 
+                    confidence=confidence, 
+                    video_url=video_rel, 
+                    roi_url=roi_rel,
+                    audit_status=0 
+                )
                 db.session.add(alarm)
                 db.session.commit()
+                logger.info(f"💾 [DB] 报警记录已保存: ID {alarm.id}")
+                
         except Exception as e:
-            logger.error(f"DB Save Error: {e}")
+            # 在上下文里回滚
+            with app.app_context():
+                db.session.rollback()
+            logger.error(f"❌ DB Save Error: {e}")
 
     def _draw_ui(self, frame, detections):
         for det in detections:
