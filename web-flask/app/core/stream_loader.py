@@ -41,7 +41,7 @@ class StreamLoader:
         
         # AI & 录像组件
         self.detector = get_detector() # 👈 直接用 detector.py 里提供的工厂函数
-        self.recorder = EvidenceRecorder(save_dir="../static/evidence", fps=25, pre_record_sec=2)
+        self.recorder = EvidenceRecorder(save_dir="static/evidence", fps=25, pre_record_sec=2)
         
         # 运行状态
         self.running = False
@@ -121,7 +121,8 @@ class StreamLoader:
             # 🛑 核心修复 1：缩短超时时间
             # stimeout;5000000 -> 5秒超时 (之前是20秒，太久了)
             # max_delay;500000 -> 限制最大延迟 0.5秒
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|max_delay;500000|buffer_size;10240"
+            # buffer_size;1024 -> 极小的缓冲区，迫使 ffmpeg 丢弃旧帧
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|max_delay;500000|buffer_size;1024"
             
             self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             

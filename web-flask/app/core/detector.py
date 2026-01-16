@@ -1,17 +1,14 @@
-#web-flask\app\core\detector.py
 import os
 import torch
+import numpy as np
 from ultralytics import YOLO
 import threading
 
-# ==========================================
-# 全局单例控制
-# ==========================================
+# 全局单例
 _DETECTOR_INSTANCE = None
 _DETECTOR_LOCK = threading.Lock()
 
 def get_detector():
-    """获取全局唯一的检测器实例 (单例模式)"""
     global _DETECTOR_INSTANCE
     with _DETECTOR_LOCK:
         if _DETECTOR_INSTANCE is None:
@@ -22,141 +19,199 @@ class SmokingDetector:
     def __init__(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # === 1. 配置计算设备 ===
-        # 显存紧张时，自动判断
+        self.use_half = False # 是否开启半精度
+
         if torch.cuda.is_available():
             self.device = 0
-            gpu_name = torch.cuda.get_device_name(0)
-            print(f"🚀 【GPU模式】 AI引擎已启动: {gpu_name}")
+            # 💡 核心优化 1：开启 FP16 半精度
+            # RTX 30 系列对 FP16 支持极好，速度翻倍且精度几乎不降
+            self.use_half = True 
+            print(f"🚀 【GPU模式】 AI引擎已启动 (FP16加速): {torch.cuda.get_device_name(0)}")
         else:
             self.device = 'cpu'
-            print("⚠️ 【CPU模式】 未检测到GPU，推理速度可能较慢")
 
-        # === 2. 加载烟头模型 (Cigarette) ===
+        # === 1. 烟头模型 ===
         smoke_model_path = os.path.join(current_dir, 'best.pt')
-        if not os.path.exists(smoke_model_path):
-            print(f"❌ 警告：找不到烟头模型 {smoke_model_path}，将跳过烟头检测")
-            self.model_smoke = None
-        else:
-            # 加载自定义训练的烟头模型
+        if os.path.exists(smoke_model_path):
             self.model_smoke = YOLO(smoke_model_path)
+        else:
+            self.model_smoke = None
 
-        # === 3. 加载人员检测模型 (Person) ===
-        # ⚡️ 优化：3060 Laptop 跑多路，建议用 s 或 m。
-        # 如果还要跑 3路以上，建议用 yolov8n.pt
-        person_model_name = 'yolov8s.pt' 
-        print(f"🚀 加载人员检测模型: {person_model_name}")
-        self.model_person = YOLO(person_model_name)
+        # === 2. 人员模型 ===
+        self.model_person = YOLO('yolov8s.pt') 
 
-        # === 4. 关键参数调优 ===
-        # ⬇️ 分辨率降回 640 (原 1280 太卡了，导致超时重启)
-        self.inference_size = 640 
+        # === 3. 关键参数调优 ===
+        self.person_imgsz = 640  
+        self.person_conf = 0.30
         
-        # ⬇️ 降低置信度，解决"近距离/半身"识别不到的问题
-        self.person_conf = 0.35  
-        self.smoke_conf = 0.40   
+        # 烟头检测参数
+        self.smoke_imgsz = 640   
+        self.smoke_conf = 0.5
+
+        self.max_persons_per_frame = 5 
+        
+        # 裁剪参数
+        self.crop_top_ratio = 0.6 
+        self.crop_side_padding = 0.3 
+
+        # ⚡️ 优化 2：减少记忆寿命
+        # 从 5 改为 3。减少"拖泥带水"，让框跟手跟得更紧
+        # 3帧约等于 100ms，足够消除闪烁，又不会产生明显拖影
+        self.grace_frames = 3  
+        self.smoke_memory = {} 
 
     def detect(self, frame):
         detections = []
-        
-        # ==========================
-        # 🕵️‍♂️ 任务一：找人 (Person Tracking)
-        # ==========================
-        if self.model_person:
-            # persist=True: 开启追踪记忆，解决闪烁
-            # conf=0.35: 让半身照也能被识别
-            # imgsz=640: 性能提升 4 倍
-            results_p = self.model_person.track(
-                frame, 
-                persist=True, 
-                classes=[0], # 0 = person
-                conf=self.person_conf, 
-                iou=0.5, 
-                imgsz=self.inference_size, 
-                verbose=False,
-                device=self.device
-            )
-            
-            raw_person_detections = []
-            self._parse_results(results_p, raw_person_detections, "person")
-            
-            # 过滤"套娃"框 (例如把头误检为另一个人)
-            filtered_persons = self._filter_contained_boxes(raw_person_detections)
-            detections.extend(filtered_persons)
+        if not self.model_person: return []
+
+        h_img, w_img = frame.shape[:2]
 
         # ==========================
-        # 🚬 任务二：找烟 (Smoke Tracking)
+        # 1. 全局找人 (FP16)
         # ==========================
-        if self.model_smoke:
-            results_s = self.model_smoke.track(
-                frame, 
-                persist=True, 
-                conf=self.smoke_conf, 
-                imgsz=self.inference_size, 
-                verbose=False,
-                device=self.device
-            )
-            self._parse_results(results_s, detections, "cigarette")
+        results_p = self.model_person.track(
+            frame, 
+            persist=True, 
+            classes=[0], 
+            conf=self.person_conf, 
+            iou=0.5, 
+            imgsz=self.person_imgsz, 
+            verbose=False,
+            device=self.device,
+            half=self.use_half # 👈 开启半精度
+        )
+        
+        current_frame_pids = set()
+        target_persons = []
+        
+        if results_p and len(results_p) > 0 and results_p[0].boxes:
+            res = results_p[0]
+            boxes = res.boxes.xyxy.cpu().numpy()
+            track_ids = res.boxes.id.int().cpu().tolist() if res.boxes.id is not None else [-1]*len(boxes)
+            confs = res.boxes.conf.cpu().numpy()
             
+            for box, tid, conf in zip(boxes, track_ids, confs):
+                if tid == -1: continue
+                current_frame_pids.add(tid)
+                x1, y1, x2, y2 = map(int, box)
+                
+                p_data = {
+                    "id": tid,
+                    "box": [x1, y1, x2, y2],
+                    "conf": float(conf),
+                    "label": "person",
+                    "area": (x2-x1)*(y2-y1)
+                }
+                target_persons.append(p_data)
+                detections.append(p_data)
+
+        # 清理记忆
+        expired_pids = [pid for pid in self.smoke_memory if pid not in current_frame_pids]
+        for pid in expired_pids:
+            del self.smoke_memory[pid]
+
+        # ==========================
+        # 2. Batch ROI 找烟 (FP16)
+        # ==========================
+        if self.model_smoke and len(target_persons) > 0:
+            target_persons.sort(key=lambda x: x['area'], reverse=True)
+            active_persons = target_persons[:self.max_persons_per_frame]
+
+            batch_rois = []
+            batch_meta = [] 
+
+            for p in active_persons:
+                px1, py1, px2, py2 = p['box']
+                pw, ph = px2 - px1, py2 - py1
+                
+                pad_w = int(pw * self.crop_side_padding)
+                crop_x1 = max(0, px1 - pad_w)
+                crop_x2 = min(w_img, px2 + pad_w)
+                crop_y1 = max(0, py1 - int(ph * 0.1)) 
+                crop_y2 = min(h_img, py1 + int(ph * self.crop_top_ratio))
+
+                if crop_x2 <= crop_x1 or crop_y2 <= crop_y1: continue
+
+                roi = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+                batch_rois.append(roi)
+                batch_meta.append({
+                    'offset': (crop_x1, crop_y1),
+                    'pid': p['id'],
+                    'p_origin': (px1, py1)
+                })
+
+            if len(batch_rois) > 0:
+                # 🚀 Batch 推理 + FP16
+                results_batch = self.model_smoke.predict(
+                    batch_rois,
+                    conf=self.smoke_conf,
+                    imgsz=self.smoke_imgsz,
+                    verbose=False,
+                    device=self.device,
+                    half=self.use_half, # 👈 开启半精度
+                    classes=[0] 
+                )
+
+                for i, res in enumerate(results_batch):
+                    meta = batch_meta[i]
+                    pid = meta['pid']
+                    px1, py1 = meta['p_origin']
+                    found_smoke_real = False 
+
+                    if res.boxes:
+                        best_box = max(res.boxes, key=lambda x: x.conf[0])
+                        sx1, sy1, sx2, sy2 = best_box.xyxy[0].cpu().numpy()
+                        s_conf = float(best_box.conf[0])
+                        
+                        ox, oy = meta['offset']
+                        gx1, gy1 = int(sx1 + ox), int(sy1 + oy)
+                        gx2, gy2 = int(sx2 + ox), int(sy2 + oy)
+
+                        # 记录相对坐标
+                        rel_x = gx1 - px1
+                        rel_y = gy1 - py1
+                        rel_w = gx2 - gx1
+                        rel_h = gy2 - gy1
+
+                        # 刷新记忆
+                        self.smoke_memory[pid] = {
+                            'rel_box': [rel_x, rel_y, rel_w, rel_h],
+                            'life': self.grace_frames, 
+                            'conf': s_conf
+                        }
+                        
+                        detections.append({
+                            "id": pid, 
+                            "box": [gx1, gy1, gx2, gy2],
+                            "conf": s_conf,
+                            "label": "cigarette",
+                            "is_roi": True
+                        })
+                        found_smoke_real = True
+
+                    # 防闪烁逻辑 (惯性追踪)
+                    if not found_smoke_real and pid in self.smoke_memory:
+                        mem = self.smoke_memory[pid]
+                        if mem['life'] > 0:
+                            mem['life'] -= 1
+                            
+                            # 重建坐标
+                            rx, ry, rw, rh = mem['rel_box']
+                            pred_x1 = px1 + rx
+                            pred_y1 = py1 + ry
+                            pred_x2 = pred_x1 + rw
+                            pred_y2 = pred_y1 + rh
+                            
+                            detections.append({
+                                "id": pid,
+                                "box": [pred_x1, pred_y1, pred_x2, pred_y2],
+                                "conf": mem['conf'],
+                                "label": "cigarette",
+                                "is_roi": True,
+                                "is_prediction": True
+                            })
+
         return detections
 
     def _filter_contained_boxes(self, detections):
-        """
-        [算法优化] 俄罗斯套娃去重：
-        解决大脸特写时，YOLO同时框出"整个人"和"人脸/上半身"造成两个框重叠闪烁的问题。
-        """
-        if not detections: return []
-        if len(detections) < 2: return detections
-            
-        # 按面积从大到小排序
-        sorted_dets = sorted(detections, key=lambda d: (d['box'][2]-d['box'][0]) * (d['box'][3]-d['box'][1]), reverse=True)
-        keep = []
-        
-        for i, small_det in enumerate(sorted_dets):
-            is_contained = False
-            s_box = small_det['box']
-            s_area = (s_box[2] - s_box[0]) * (s_box[3] - s_box[1])
-            if s_area <= 0: continue
-
-            # 和已保留的大框比对
-            for big_det in keep:
-                b_box = big_det['box']
-                
-                # 计算交集
-                inter_x1 = max(s_box[0], b_box[0])
-                inter_y1 = max(s_box[1], b_box[1])
-                inter_x2 = min(s_box[2], b_box[2])
-                inter_y2 = min(s_box[3], b_box[3])
-                
-                if inter_x2 > inter_x1 and inter_y2 > inter_y1:
-                    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
-                    
-                    # 💡 判定标准：
-                    # 如果小框 80% 以上面积都在大框里，且大框是小框的 1.2 倍以上，
-                    # 认为小框是冗余的（比如是同一个人的局部），丢弃小框。
-                    overlap_ratio = inter_area / s_area
-                    if overlap_ratio > 0.80:
-                        is_contained = True
-                        break 
-            
-            if not is_contained:
-                keep.append(small_det)
-                
-        return keep
-
-    def _parse_results(self, results, detections_list, label_name):
-        """通用解析函数"""
-        if results and len(results) > 0:
-            result = results[0]
-            if result.boxes and result.boxes.id is not None:
-                boxes = result.boxes.xyxy.cpu().numpy()
-                track_ids = result.boxes.id.int().cpu().tolist()
-                confs = result.boxes.conf.cpu().numpy()
-                
-                for box, track_id, conf in zip(boxes, track_ids, confs):
-                    detections_list.append({
-                        "id": track_id, # 追踪 ID
-                        "box": [int(b) for b in box],
-                        "conf": float(conf),
-                        "label": label_name 
-                    })
+        return detections
