@@ -9,6 +9,7 @@ from collections import defaultdict
 from app.core.detector import SmokingDetector
 from app.core.recorder import EvidenceRecorder
 from app.models import db, Alarms, Devices
+from app.core.detector import get_detector
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,14 +29,6 @@ class SmokeEvent:
         self.frame_count = 0     
         self.is_confirmed = False 
 
-GLOBAL_DETECTOR = None
-
-def get_shared_detector():
-    global GLOBAL_DETECTOR
-    if GLOBAL_DETECTOR is None:
-        print("🏗️ [System] 正在初始化全局 AI 模型 (单例模式)...")
-        GLOBAL_DETECTOR = SmokingDetector()
-    return GLOBAL_DETECTOR
 # ==========================================
 # StreamLoader: 单个摄像头的管理单元
 # ==========================================
@@ -47,8 +40,8 @@ class StreamLoader:
         self.lock = threading.Lock()
         
         # AI & 录像组件
-        self.detector = get_shared_detector()
-        self.recorder = EvidenceRecorder(save_dir="app/static/evidence", fps=25, pre_record_sec=2)
+        self.detector = get_detector() # 👈 直接用 detector.py 里提供的工厂函数
+        self.recorder = EvidenceRecorder(save_dir="../static/evidence", fps=25, pre_record_sec=2)
         
         # 运行状态
         self.running = False
