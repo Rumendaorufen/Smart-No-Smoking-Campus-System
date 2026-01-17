@@ -119,7 +119,22 @@ const query = reactive({
 const fetchData = async () => {
   loading.value = true
   try {
-    const res: any = await getArchive(query)
+    // 1. 构造一个干净的参数对象
+    const params: any = {
+      page: query.page,
+      page_size: query.page_size,
+      // 只有当有日期时才传，否则不传(后端能更好处理)
+      start_time: query.start_time || undefined,
+      end_time: query.end_time || undefined
+    }
+
+    // 2. 只有当 status 有值且不为空字符串时才传
+    // ElementPlus 清空 select 时 status 会变成 ""，传给后端可能导致类型转换警告
+    if (query.status !== undefined && query.status !== '') {
+      params.status = query.status
+    }
+
+    const res: any = await getArchive(params)
     if (res.code === 200) {
       list.value = res.data.list
       total.value = res.data.total

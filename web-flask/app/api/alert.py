@@ -55,7 +55,7 @@ def audit_alarm(alarm_id):
 
         data = request.json
         new_status = data.get('status')
-        # remark = data.get('remark') # ❌ 数据库没这字段，存不了
+        remark = data.get('remark') 
 
         if new_status not in [1, 2, 9]:
             return jsonify({'code': 400, 'msg': '无效的状态码'})
@@ -86,22 +86,39 @@ def get_archive():
         device_id = request.args.get('device_id', type=int)
         status = request.args.get('status', type=int)
         
-        # ✅ 修正：使用 audit_status
+        # 获取时间参数
+        start_time = request.args.get('start_time')
+        end_time = request.args.get('end_time')
+        
+        # 1. 基础过滤
         query = Alarms.query.filter(Alarms.audit_status != 0)
 
         if device_id:
             query = query.filter(Alarms.camera_id == device_id)
         if status:
             query = query.filter(Alarms.audit_status == status)
+            
+        # ✅ 2. 补上时间过滤 (使用正确的 created_at)
+        if start_time and end_time:
+            query = query.filter(Alarms.created_at.between(start_time, end_time))
 
-        # ✅ 修正：使用 create_time
-        query = query.order_by(desc(Alarms.create_time))
+        # ✅ 3. 修复排序报错 (使用正确的 created_at)
+        query = query.order_by(desc(Alarms.created_at))
         
         pagination = query.paginate(page=page, per_page=page_size, error_out=False)
         data = [item.to_dict() for item in pagination.items]
 
-        return jsonify({'code': 200, 'data': {'list': data, 'total': pagination.total, 'pages': pagination.pages}})
+        return jsonify({
+            'code': 200, 
+            'data': {
+                'list': data, 
+                'total': pagination.total, 
+                'pages': pagination.pages
+            }
+        })
     except Exception as e:
+        # 建议打印错误，方便你在控制台看到真实的报错
+        print(f"❌ 档案查询报错: {e}")
         return jsonify({'code': 500, 'msg': str(e)})
 
 # 删除接口保持不变，只要引用对字段即可
