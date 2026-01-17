@@ -2,6 +2,7 @@
 from flask import Blueprint, jsonify, Response, request, stream_with_context
 import cv2
 import time
+import re  # ✅ 解决 NameError: name 're' is not defined
 import os
 import socket  # 👈 必须导入
 import threading # 👈 必须导入
@@ -11,6 +12,8 @@ from app.models import db, Devices
 from app.models.user import User 
 from app import stream_manager 
 from flask_jwt_extended import jwt_required, get_jwt_identity
+# 务必确保引入了 Response, send_file, current_app
+from flask import Blueprint, jsonify, request, Response, send_file, current_app
 
 monitor_bp = Blueprint('monitor', __name__)
 
@@ -284,3 +287,68 @@ def video_feed(device_id):
     if not device: return "Device not found", 404
     stream_manager.add_camera(device_id, device.rtsp_url)
     return Response(stream_with_context(generate_frames(device_id)), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# 专门处理视频播放的路由
+# 前端请求地址: /api/v1/monitor/video/static/evidence/xxx.mp4
+@monitor_bp.route('/video/<path:filename>')
+def stream_video_file(filename):
+    """
+    支持 Range 请求的视频流服务
+    """
+    # 1. 拼接绝对路径
+    # 注意：filename 可能是 "static/evidence/xxx.mp4"
+    # 我们需要把它拼接到 app 的根目录下
+    base_dir = current_app.root_path # web-flask/app
+    
+    # 如果 filename 开头带了 static/，需要处理一下路径
+    # 假设 filename 是 "static/evidence/xxx.mp4"
+    # 而文件实际在 "web-flask/app/static/evidence/xxx.mp4"
+    # 所以直接 join 即可，因为 app.root_path 指向 app 文件夹
+    # 但要注意 filename 是否包含 'app/' 前缀，如果有要去掉
+    clean_filename = filename.replace('app/', '')
+    
+    # 构建绝对路径
+    # 如果 filename 是 "static/evidence/video.mp4"
+    # root_path 是 ".../app"
+    # 拼接后是 ".../app/static/evidence/video.mp4"
+    # 此时需要回退一层，因为 static 在 app 下面
+    # 这里有点绕，最稳妥的是直接拼：
+    file_path = os.path.join(current_app.root_path, clean_filename)
+    
+    # 如果路径不对，尝试另一种拼接（针对你现在的目录结构）
+    if not os.path.exists(file_path):
+        # 尝试去掉 static 前缀再拼（防止重叠）
+        if clean_filename.startswith('static/'):
+             file_path = os.path.join(current_app.root_path, clean_filename)
+    
+    if not os.path.exists(file_path):
+        return Response("Video not found", status=404)
+
+    file_size = os.path.getsize(file_path)
+    range_header = request.headers.get('Range', None)
+
+    if not range_header:
+        return send_file(file_path)
+
+    # 解析 Range 头部 (e.g., "bytes=0-")
+    match = re.search(r'(\d+)-(\d*)', range_header)
+    groups = match.groups()
+
+    first_byte = int(groups[0]) if groups[0] else 0
+    last_byte = int(groups[1]) if groups[1] else file_size - 1
+
+    # 限制长度，防止溢出
+    if last_byte >= file_size:
+        last_byte = file_size - 1
+
+    length = last_byte - first_byte + 1
+
+    # 读取文件片段
+    with open(file_path, 'rb') as f:
+        f.seek(first_byte)
+        data = f.read(length)
+
+    resp = Response(data, 206, mimetype='video/mp4', direct_passthrough=True)
+    resp.headers.add('Content-Range', f'bytes {first_byte}-{last_byte}/{file_size}')
+    resp.headers.add('Accept-Ranges', 'bytes')
+    return resp

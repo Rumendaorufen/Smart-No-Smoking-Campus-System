@@ -5,6 +5,8 @@ import Monitor from '../views/Monitor.vue'
 import UserManage from '../views/UserManage.vue'
 import { ElMessage } from 'element-plus'
 import DeviceManage from '../views/DeviceManage.vue'
+import AuditConsole from '../views/AuditConsole.vue'
+import AlarmArchive from '../views/AlarmArchive.vue'
 
 const routes = [
   {
@@ -31,6 +33,18 @@ const routes = [
     name: 'DeviceManage',
     component: DeviceManage,
     meta: { title: '设备管理', roles: ['admin'] } // 权限控制
+  },
+  {
+  path: '/audit',
+  name: 'AuditConsole',
+  component: AuditConsole,
+  meta: { title: '报警仲裁台', requiresAuth: true }
+  },
+  {
+  path: '/archive',
+  name: 'AlarmArchive',
+  component: AlarmArchive,
+  meta: { title: '违规历史档案', requiresAuth: true }
   }
 ]
 

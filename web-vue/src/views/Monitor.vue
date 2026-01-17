@@ -32,6 +32,30 @@
         </div>
 
         <div class="user-actions">
+           <el-tooltip content="处理报警记录" placement="bottom">
+            <el-button 
+              type="danger" 
+              size="small" 
+              class="action-btn"
+              @click="$router.push('/audit')"
+            >
+              <el-icon><Bell /></el-icon>
+              报警仲裁
+            </el-button>
+          </el-tooltip>
+
+          <el-tooltip content="查看历史违规" placement="bottom">
+            <el-button 
+              type="primary" 
+              size="small" 
+              class="action-btn"
+              @click="$router.push('/archive')"
+            >
+              <el-icon><Files /></el-icon>
+              历史档案
+            </el-button>
+          </el-tooltip>
+          
           <template v-if="isAdmin">
             <el-button 
               type="primary" 
@@ -40,7 +64,7 @@
               @click="$router.push('/devices')"
             >
               <el-icon><VideoCameraFilled /></el-icon>
-              设备管理
+              设备
             </el-button>
 
             <el-button 
@@ -50,7 +74,7 @@
               @click="$router.push('/users')"
             >
               <el-icon><Setting /></el-icon>
-              用户管理
+              用户
             </el-button>
           </template>
 
@@ -83,8 +107,15 @@
             </div>
             <div class="status-row active">
               <span class="status-icon">●</span>
-              <span>数据采集</span>
+              <span>AI 检测引擎</span>
               <span class="status-tag">运行中</span>
+            </div>
+            <div class="status-row active">
+              <span class="status-icon">●</span>
+              <span>WebSocket</span>
+              <span class="status-tag" :class="isSocketConnected ? 'online' : 'offline'">
+                {{ isSocketConnected ? '已连接' : '断开' }}
+              </span>
             </div>
           </div>
         </div>
@@ -121,7 +152,14 @@
       </div>
       
       <div class="center-monitor">
-        <div v-if="currentDevice" class="monitor-player-box" :class="{ 'offline': currentDevice.status !== 1 }">
+        <div 
+          v-if="currentDevice" 
+          class="monitor-player-box" 
+          :class="{ 
+            'offline': currentDevice.status !== 1,
+            'is-alarm': alarmState[currentDevice.id] // 🔥 红框报警特效
+          }"
+        >
           <div class="player-header">
             <div class="header-left">
               <span v-if="currentDevice.status === 1" class="live-badge">LIVE</span>
@@ -156,15 +194,9 @@
               </div>
               
               <div class="overlay-sub">
-                <template v-if="currentDevice.isRetrying">
-                    请稍候，正在与设备进行握手...
-                </template>
-                <template v-else-if="currentDevice.failTip">
-                    请检查设备 IP、端口或网络连通性
-                </template>
-                <template v-else>
-                    信号丢失，请检查线路或电源
-                </template>
+                <template v-if="currentDevice.isRetrying">请稍候，正在与设备进行握手...</template>
+                <template v-else-if="currentDevice.failTip">请检查设备 IP、端口或网络连通性</template>
+                <template v-else>信号丢失，请检查线路或电源</template>
               </div>
               
               <el-button 
@@ -181,6 +213,12 @@
               <div class="loading-spinner large"></div>
               <div class="overlay-text">正在连接视频流...</div>
             </div>
+
+            <div v-if="alarmState[currentDevice.id]" class="alarm-overlay">
+              <el-icon class="alarm-icon" :size="24"><Warning /></el-icon>
+              <span>警告：检测到吸烟行为！</span>
+            </div>
+
           </div>
 
           <div class="player-controls">
@@ -216,7 +254,8 @@
               class="device-nav-item"
               :class="{ 
                 'active': currentDevice && currentDevice.id === device.id,
-                'offline': device.status !== 1 
+                'offline': device.status !== 1,
+                'is-alarm': alarmState[device.id] // 🔥 列表项也闪烁
               }"
               @click="switchDevice(device)"
             >
@@ -225,6 +264,11 @@
                 <div class="nav-name">{{ device.name }}</div>
                 <div class="nav-sub">ID: {{ device.id }}</div>
               </div>
+              
+              <div v-if="alarmState[device.id]" class="nav-alarm-icon">
+                 <el-icon color="#F56C6C"><Warning /></el-icon>
+              </div>
+
               <div class="nav-arrow">
                 <el-icon><ArrowRight /></el-icon>
               </div>
@@ -253,26 +297,77 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useDeviceStore } from '../stores/device' // ✅ 引入 Store
+import { useDeviceStore } from '../stores/device'
 import { storeToRefs } from 'pinia'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { 
-  Setting, SwitchButton, Refresh, Connection,
-  FullScreen, VideoCameraFilled, Monitor, ArrowRight, Loading, Warning,CircleCloseFilled
+  Setting, SwitchButton, Refresh, Connection, Bell, Files,
+  FullScreen, VideoCameraFilled, Monitor, ArrowRight, Loading, Warning, CircleCloseFilled
 } from '@element-plus/icons-vue'
 import authApi from '../api/auth'
+import { io, Socket } from 'socket.io-client' // 引入 socket
+
+// ========== WebSocket 逻辑 ==========
+const socket = ref<Socket | null>(null)
+const isSocketConnected = ref(false)
+const alarmState = ref<Record<number, boolean>>({}) // 存储报警状态
+
+const initSocket = () => {
+  const BASE_URL = 'http://localhost:5000'
+  socket.value = io(BASE_URL, {
+    transports: ['websocket'],
+    path: '/socket.io'
+  })
+
+  socket.value.on('connect', () => {
+    console.log('✅ WebSocket 已连接')
+    isSocketConnected.value = true
+  })
+
+  socket.value.on('disconnect', () => {
+    console.log('❌ WebSocket 断开')
+    isSocketConnected.value = false
+  })
+
+  // 监听报警
+  socket.value.on('alarm_event', (data: any) => {
+    console.log('🔥 收到报警:', data)
+    triggerAlarmEffect(data.device_id, data.msg)
+  })
+}
+
+// 触发报警特效
+const triggerAlarmEffect = (deviceId: number, msg: string) => {
+  // 1. 开启状态
+  alarmState.value[deviceId] = true
+
+  // 2. 弹窗通知
+  ElNotification({
+    title: '⚠️ 发现吸烟行为',
+    message: `${msg} (点击去处理)`,
+    type: 'warning',
+    duration: 5000,
+    onClick: () => {
+      router.push('/audit')
+    }
+  })
+
+  // 3. 5秒后自动关闭红框
+  setTimeout(() => {
+    alarmState.value[deviceId] = false
+  }, 5000)
+}
+// ===================================
 
 const isGlobalRetrying = computed(() => {
   return deviceList.value.some(d => d.isRetrying)
 })
 
-// 方法
 const handleReconnectAll = () => {
   deviceStore.reconnectAll()
 }
 
 const router = useRouter()
-// 使用 Store
 const deviceStore = useDeviceStore()
 const { deviceList } = storeToRefs(deviceStore)
 
@@ -301,6 +396,7 @@ const handleLogout = async () => {
     try { await authApi.logout() } catch(e) {}
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
+    if (socket.value) socket.value.disconnect() // 断开 socket
     router.push('/login')
   }).catch(() => {})
 }
@@ -308,13 +404,12 @@ const handleLogout = async () => {
 // 切换设备
 const switchDevice = (device: any) => {
   if (currentDevice.value?.id !== device.id) {
-    // 调用 Store 更新 loading 状态 (如果是 Pinia 管理，这会反应到 list 从而反应到 currentDevice)
     deviceStore.updateDeviceState(device.id, { isLoading: true })
     currentDevice.value = device
   }
 }
 
-// 代理到 Store 的方法
+// 代理方法
 const retryConnection = () => {
     if (currentDevice.value) {
         deviceStore.retryConnection(currentDevice.value.id)
@@ -329,7 +424,6 @@ const getStreamUrl = (id: number) => deviceStore.getStreamUrl(id)
 const handleVideoError = (id: number) => deviceStore.handleVideoError(id)
 const handleVideoLoaded = (id: number) => deviceStore.updateDeviceState(id, { isLoading: false })
 
-// 监听 deviceList 变化，保持 currentDevice 指向最新对象
 watch(deviceList, (newList) => {
   if (currentDevice.value) {
     const updatedItem = newList.find(d => d.id === currentDevice.value.id)
@@ -342,28 +436,25 @@ watch(deviceList, (newList) => {
   }
 }, { deep: true })
 
-// 时间更新
 const updateTime = () => {
   const now = new Date()
   currentTime.value = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   currentDate.value = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
 }
 
-// 生命周期
 onMounted(() => {
   updateTime()
   timeTimer = setInterval(updateTime, 1000)
-  // 启动全局轮询
   deviceStore.startPolling()
+  initSocket() // ✅ 启动 Socket
 })
 
 onUnmounted(() => {
   if (timeTimer) clearInterval(timeTimer)
-  // 停止轮询
   deviceStore.stopPolling()
+  if (socket.value) socket.value.disconnect() // ✅ 清理 Socket
 })
 
-// 全屏
 const viewFullScreen = (deviceId: number) => {
   const device = deviceList.value.find(d => d.id === deviceId)
   if (device) {
@@ -374,7 +465,7 @@ const viewFullScreen = (deviceId: number) => {
 </script>
 
 <style scoped>
-/* 保持原有样式，增加 spin-icon 动画 */
+/* 原有样式保持不变 */
 .monitor-screen { height: 100vh; background: linear-gradient(135deg, #0a0e17 0%, #1a1f2e 50%, #0d1119 100%); color: #e4e7ed; display: flex; flex-direction: column; overflow: hidden; }
 
 /* 顶部栏 */
@@ -406,18 +497,9 @@ const viewFullScreen = (deviceId: number) => {
 .panel-section.full-height { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
 /* 动画和错误样式 */
-.spin-icon {
-  animation: spin 1s linear infinite;
-  color: #409eff;
-}
-.error-icon {
-  color: #f56c6c;
-  animation: shake 0.4s ease-in-out;
-}
-.error-text {
-  color: #f56c6c !important;
-  font-weight: bold;
-}
+.spin-icon { animation: spin 1s linear infinite; color: #409eff; }
+.error-icon { color: #f56c6c; animation: shake 0.4s ease-in-out; }
+.error-text { color: #f56c6c !important; font-weight: bold; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
 
@@ -428,6 +510,8 @@ const viewFullScreen = (deviceId: number) => {
 .status-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; }
 .status-row .status-icon { color: #67c23a; }
 .status-tag { margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(103, 194, 58, 0.2); color: #67c23a; }
+.status-tag.offline { background: rgba(245, 108, 108, 0.2); color: #f56c6c; }
+
 .action-buttons { display: flex; flex-direction: column; gap: 10px; }
 .action-buttons .el-button { width: 100%; margin: 0; justify-content: center; }
 
@@ -440,8 +524,19 @@ const viewFullScreen = (deviceId: number) => {
 
 /* 中间大屏 */
 .center-monitor { flex: 1; background: rgba(0,0,0,0.2); border-radius: 12px; overflow: hidden; position: relative; display: flex; flex-direction: column; }
-.monitor-player-box { width: 100%; height: 100%; display: flex; flex-direction: column; background: rgba(22, 33, 52, 0.8); border: 1px solid rgba(64, 158, 255, 0.3); border-radius: 12px; overflow: hidden; }
+.monitor-player-box { width: 100%; height: 100%; display: flex; flex-direction: column; background: rgba(22, 33, 52, 0.8); border: 1px solid rgba(64, 158, 255, 0.3); border-radius: 12px; overflow: hidden; transition: all 0.3s; }
 .monitor-player-box.offline { border-color: #f56c6c; background: rgba(40, 10, 10, 0.8); }
+
+/* 🔥 红框报警特效 */
+.monitor-player-box.is-alarm {
+  border-color: #F56C6C;
+  box-shadow: 0 0 30px rgba(245, 108, 108, 0.6) inset;
+  animation: flashBorder 0.8s infinite alternate;
+}
+@keyframes flashBorder {
+  from { border-color: #F56C6C; box-shadow: 0 0 10px #F56C6C; }
+  to { border-color: transparent; box-shadow: none; }
+}
 
 .player-header { height: 50px; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; background: linear-gradient(90deg, rgba(64,158,255,0.1) 0%, transparent 100%); }
 .header-left { display: flex; align-items: center; gap: 12px; }
@@ -458,6 +553,25 @@ const viewFullScreen = (deviceId: number) => {
 .player-content { flex: 1; background: #000; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
 .main-stream { width: 100%; height: 100%; object-fit: contain; }
 .player-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #909399; z-index: 10; }
+
+/* 🔥 报警文字遮罩 */
+.alarm-overlay {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(245, 108, 108, 0.9);
+  color: white;
+  padding: 8px 20px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: bold;
+  font-size: 16px;
+  z-index: 100;
+  animation: blink 0.5s infinite;
+}
 
 .player-controls { height: 60px; background: rgba(10, 14, 23, 0.9); border-top: 1px solid rgba(64,158,255,0.2); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; z-index: 20; }
 .control-info { color: #606266; font-size: 12px; font-family: monospace; }
@@ -478,6 +592,14 @@ const viewFullScreen = (deviceId: number) => {
 .nav-sub { font-size: 12px; color: #909399; }
 .nav-arrow { opacity: 0; transform: translateX(-5px); transition: all 0.2s; }
 .device-nav-item.active .nav-arrow { opacity: 1; transform: translateX(0); }
+
+/* 🔥 列表项报警闪烁 */
+.device-nav-item.is-alarm {
+  border: 1px solid #f56c6c;
+  background: rgba(245, 108, 108, 0.1);
+  animation: blink 1s infinite;
+}
+.nav-alarm-icon { margin-right: 10px; animation: shake 0.5s infinite; }
 
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #606266; gap: 20px; }
 .bottom-bar { padding: 10px; background: #0d1119; border-top: 1px solid rgba(64,158,255,0.1); text-align: center; font-size: 12px; color: #606266; flex-shrink: 0; }

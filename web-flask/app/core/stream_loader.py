@@ -41,7 +41,7 @@ class StreamLoader:
         
         # AI & 录像组件
         self.detector = get_detector() # 👈 直接用 detector.py 里提供的工厂函数
-        self.recorder = EvidenceRecorder(save_dir="static/evidence", fps=25, pre_record_sec=2)
+        self.recorder = EvidenceRecorder(save_dir="app/static/evidence", fps=25, pre_record_sec=2)
         
         # 运行状态
         self.running = False
@@ -314,8 +314,8 @@ class StreamLoader:
             # 必须使用 with app.app_context(): 才能在线程里操作 DB
             with app.app_context():
                 video_rel = "static/evidence/" + os.path.basename(video_path) if video_path else ""
-                roi_rel = "static/evidence/" + os.path.basename(roi_path) if roi_path else ""
-                
+                roi_rel = "static/evidence/snapshots/" + os.path.basename(roi_path) if roi_path else ""
+                    
                 alarm = Alarms(
                     camera_id=self.camera_id, 
                     type='SMOKING', 

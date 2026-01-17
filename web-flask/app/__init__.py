@@ -61,4 +61,7 @@ def create_app():
     from app.api.user import user_bp
     app.register_blueprint(user_bp, url_prefix='/api/v1/users')
 
+    from app.api.alert import alert_bp  # 👈 新增导入
+    app.register_blueprint(alert_bp, url_prefix='/api/v1/alerts') # 👈 注册路径
+
     return app

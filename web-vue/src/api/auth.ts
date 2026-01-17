@@ -2,6 +2,11 @@
 // 如果你的编辑器报错找不到模块，请确保 src/utils/request.ts 存在
 // 也可以尝试改为 import request from '../utils/request'
 import request from '../utils/request'
+export interface ApiResponse<T = any> {
+  code: number
+  msg: string
+  data: T
+}
 
 // 定义登录参数接口
 export interface LoginData {
