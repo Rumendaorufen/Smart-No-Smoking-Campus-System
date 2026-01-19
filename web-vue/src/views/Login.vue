@@ -1,3 +1,4 @@
+<!-- web-vue\src\views\Login.vue -->
 <template>
   <div class="login-container">
     <div class="bg-decoration circle-1"></div>

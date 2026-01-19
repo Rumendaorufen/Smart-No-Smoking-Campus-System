@@ -1,3 +1,4 @@
+<!-- web-vue\src\views\Monitor.vue -->
 <template>
   <div class="monitor-screen">
     <div class="top-bar">

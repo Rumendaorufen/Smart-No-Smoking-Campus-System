@@ -1,3 +1,4 @@
+<!-- web-vue\src\views\DeviceManage.vue -->
 <template>
   <div class="device-manage-container">
     
