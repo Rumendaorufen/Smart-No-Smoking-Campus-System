@@ -54,8 +54,15 @@ class StreamLoader:
         self.alarm_threshold_frames = 15
         self.lost_timeout = 2.0
         self.last_read_time = time.time()
-        self.smoker_records = {} 
-        self.alarm_cooldown = 300.0 
+        #self.smoker_records = {} 
+        # ✅ 新增：记录最近的报警事件 [(x, y, timestamp), ...]
+        # self.recent_alarm_locations = [] 
+        # ❌ 删除旧的: self.recent_alarm_locations = [] 
+        # ✅ 新增: 动态冷却状态字典
+        # 结构: { key: {'pos': (cx, cy), 'time': timestamp, 'type': 'dynamic'/'static'} }
+        self.active_cooldowns = {}
+        self.alarm_cooldown = 300.0
+        self.alarm_radius = 200 # 像素距离，在这个范围内认为是同一个人
 
         # 信号量
         self.reconnect_requested = False
@@ -241,34 +248,110 @@ class StreamLoader:
     def _run_ai_logic(self, frame):
         h, w = frame.shape[:2]
         current_time = time.time()
+        
+        # 1. AI 推理
         detections = self.detector.detect(frame)
         persons = [d for d in detections if d['label'] == 'person']
         cigarettes = [d for d in detections if d['label'] == 'cigarette']
         
+        # =========================================================
+        # 2. 🟢 维护阶段：更新冷却圈位置 (让冷却圈跟着人走)
+        # =========================================================
+        # 构建当前帧人物 ID 映射表 {pid: box}
+        current_pids = {p['id']: p['box'] for p in persons}
+        
+        keys_to_remove = []
+        for key, record in self.active_cooldowns.items():
+            # A. 检查时间是否过期
+            if current_time - record['time'] > self.alarm_cooldown:
+                keys_to_remove.append(key)
+                continue
+            
+            # B. 如果是动态冷却 (绑定了 Person ID)，且这个人还在画面里 -> 更新坐标
+            # key 就是 person_id (int 类型)
+            if isinstance(key, int):
+                if key in current_pids:
+                    # 人还在，更新坐标到人的中心点
+                    box = current_pids[key]
+                    cx, cy = (box[0] + box[2])/2, (box[1] + box[3])/2
+                    record['pos'] = (cx, cy)
+                    record['last_seen'] = current_time # 刷新最后可见时间
+                else:
+                    # 人跟丢了，保持最后已知位置 (退化为静态冷却)
+                    # 可选：如果跟丢太久，是否提前移除？这里暂时保持静态保护直到超时
+                    pass
+
+        # 清理过期记录
+        for k in keys_to_remove: 
+            del self.active_cooldowns[k]
+
+        # =========================================================
+        # 3. 🔴 判定阶段：检测烟头是否触发报警
+        # =========================================================
         for cig in cigarettes:
             cid = cig['id']
             conf = cig['conf']
             cbox = cig['box']
+            
             event = self.smoke_events[cid]
             event.last_seen_time = current_time
             event.frame_count += 1
             
             if event.frame_count >= self.alarm_threshold_frames:
                 cig['is_alarm'] = True
+                
+                # 如果这个事件还没确认过，才进行冷却检查
                 if not event.is_confirmed:
-                    owner_id = self._match_person_id(cbox, persons)
-                    cooldown_key = owner_id if owner_id is not None else "unknown"
-                    last_time = self.smoker_records.get(cooldown_key, 0)
-                    if current_time - last_time > self.alarm_cooldown:
-                        self.smoker_records[cooldown_key] = current_time
+                    # 获取烟头中心坐标
+                    c_cx = (cbox[0] + cbox[2]) / 2
+                    c_cy = (cbox[1] + cbox[3]) / 2
+                    
+                    is_cooling_down = False
+                    
+                    # 检查是否落在任何一个“冷却圈”内
+                    for record in self.active_cooldowns.values():
+                        rx, ry = record['pos']
+                        # 计算欧氏距离
+                        dist = math.sqrt((c_cx - rx)**2 + (c_cy - ry)**2)
+                        if dist < self.alarm_radius:
+                            is_cooling_down = True
+                            break # 命中冷却，跳过
+                    
+                    if not is_cooling_down:
+                        # 🔥 触发新报警！
                         event.is_confirmed = True
+                        
+                        # 尝试找到烟头的主人
+                        owner_id = self._match_person_id(cbox, persons)
+                        
                         logger.warning(f"🔥 ALARM TRIGGERED: Cam {self.camera_id}")
                         self._trigger_alarm_save(frame, owner_id, conf, w, h)
+                        
+                        # ⭐ 核心：创建新的冷却记录
+                        if owner_id is not None:
+                            # 绑定到人 (动态冷却)
+                            # key 使用 owner_id (int)，方便后续更新
+                            self.active_cooldowns[owner_id] = {
+                                'pos': (c_cx, c_cy), # 初始位置
+                                'time': current_time,
+                                'type': 'dynamic'
+                            }
+                        else:
+                            # 没匹配到人 (静态冷却)
+                            # key 使用随机字符串，这就不会被上面的 isinstance(key, int) 更新逻辑捕获
+                            static_key = f"static_{time.time()}_{cid}"
+                            self.active_cooldowns[static_key] = {
+                                'pos': (c_cx, c_cy),
+                                'time': current_time,
+                                'type': 'static'
+                            }
             else:
                 cig['is_alarm'] = False
 
+        # 清理过期的烟头追踪记录 (不是冷却记录，是 YOLO 烟头 ID 缓存)
         expired = [tid for tid, evt in self.smoke_events.items() if current_time - evt.last_seen_time > self.lost_timeout]
         for tid in expired: del self.smoke_events[tid]
+        
         return detections
 
     def _trigger_alarm_save(self, frame, owner_id, conf, w, h):

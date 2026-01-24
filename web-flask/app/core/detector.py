@@ -78,7 +78,8 @@ class SmokingDetector:
             imgsz=self.person_imgsz, 
             verbose=False,
             device=self.device,
-            half=self.use_half # 👈 开启半精度
+            half=self.use_half,
+            tracker="bytetrack.yaml"  # 👈 显式指定使用 ByteTrack，比默认的 BoT-SORT 更稳
         )
         
         current_frame_pids = set()
