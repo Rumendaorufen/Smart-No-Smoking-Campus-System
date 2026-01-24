@@ -5,6 +5,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import desc
+from app.models.devices import Devices #  引入 Devices 模型
 
 from app.models import db
 from app.models.alarm import Alarms
@@ -85,10 +86,16 @@ def get_archive():
         page_size = request.args.get('page_size', 10, type=int)
         device_id = request.args.get('device_id', type=int)
         status = request.args.get('status', type=int)
+
+        #  获取审核人参数
+        auditor_name = request.args.get('auditor_name')
         
         # 获取时间参数
         start_time = request.args.get('start_time')
         end_time = request.args.get('end_time')
+
+        # 获取前端传来的设备名称 (可能为空)
+        device_name = request.args.get('device_name')
         
         # 1. 基础过滤
         query = Alarms.query.filter(Alarms.audit_status != 0)
@@ -102,12 +109,23 @@ def get_archive():
         if start_time and end_time:
             query = query.filter(Alarms.created_at.between(start_time, end_time))
 
+        # ✅新增：设备名称模糊查询 (联表查询)
+        if device_name:
+            # 逻辑：Alarms 表连接 Devices 表，查找 Devices.name 包含关键词的记录
+            query = query.join(Devices).filter(Devices.name.like(f'%{device_name}%'))
+        
+           # 筛选审核人
+        if auditor_name:
+            # 联表查询：Alarm 连 User 表，查找 username 包含关键词的
+            query = query.join(User, Alarms.auditor_id == User.id).filter(User.username.like(f'%{auditor_name}%'))
+
+
         # ✅ 3. 修复排序报错 (使用正确的 created_at)
         query = query.order_by(desc(Alarms.created_at))
-        
         pagination = query.paginate(page=page, per_page=page_size, error_out=False)
         data = [item.to_dict() for item in pagination.items]
 
+     
         return jsonify({
             'code': 200, 
             'data': {

@@ -40,6 +40,8 @@ class Alarms(db.Model):
             
             # ✅ 前端统一用 created_at
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            # ✅✅✅ 把审核人ID传给前端，用于权限判断
+            'auditor_id': self.auditor_id,
             
             'video_url': self.video_url,
             'roi_url': self.roi_url,
