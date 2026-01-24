@@ -423,7 +423,8 @@ class StreamLoader:
             label = det['label']
             if label == 'person':
                 color = (255, 0, 0)
-                text = f"ID:{det['id']}"
+                # ✅ 修改显示：加上摄像头ID前缀
+                text = f"Cam{self.camera_id}-ID:{det['id']}"
             else:
                 if det.get('is_alarm'):
                     color = (0, 0, 255)
