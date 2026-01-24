@@ -9,6 +9,8 @@ from app.models import init_db
 # 1. 初始化全局扩展
 # cors_allowed_origins="*" 允许前端跨域连接 WebSocket
 socketio = SocketIO(cors_allowed_origins="*", async_mode='threading')
+# # 显式指定 'eventlet'，或者留空让它自动检测，但不要强制设为 'threading' (性能差)
+# socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet')
 
 # ✅ 2. 实例化 JWT
 jwt = JWTManager()

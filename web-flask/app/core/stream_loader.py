@@ -129,8 +129,11 @@ class StreamLoader:
             # stimeout;5000000 -> 5秒超时 (之前是20秒，太久了)
             # max_delay;500000 -> 限制最大延迟 0.5秒
             # buffer_size;1024 -> 极小的缓冲区，迫使 ffmpeg 丢弃旧帧
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|max_delay;500000|buffer_size;1024"
+           # 方案 A: 依然用 TCP (画面完整但容易卡)
+            # os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000|max_delay;500000"
             
+            # 方案 B: 改用 UDP (推荐尝试，画面可能花但连接快)
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp|stimeout;3000000|max_delay;500000"
             self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             
             if self.cap.isOpened():
