@@ -1,19 +1,17 @@
-#web-flask\app\api\monitor.py
-from flask import Blueprint, jsonify, Response, request, stream_with_context
+# web-flask\app\api\monitor.py
+from flask import Blueprint, jsonify, Request, request, stream_with_context, Response, send_file, current_app
 import cv2
 import time
-import re  # ✅ 解决 NameError: name 're' is not defined
+import re  
 import os
-import socket  # 👈 必须导入
-import threading # 👈 必须导入
-from urllib.parse import urlparse # 👈 必须导入
+import socket  
+import threading 
+from urllib.parse import urlparse 
 from contextlib import contextmanager
 from app.models import db, Devices
 from app.models.user import User 
 from app import stream_manager 
 from flask_jwt_extended import jwt_required, get_jwt_identity
-# 务必确保引入了 Response, send_file, current_app
-from flask import Blueprint, jsonify, request, Response, send_file, current_app
 
 monitor_bp = Blueprint('monitor', __name__)
 
@@ -24,7 +22,6 @@ monitor_bp = Blueprint('monitor', __name__)
 # 1. 上下文管理器：临时绕过系统代理
 @contextmanager
 def no_proxy_scope():
-    # 保存旧环境变量
     old_props = {}
     for k in ['http_proxy', 'https_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']:
         if k in os.environ:
@@ -34,7 +31,6 @@ def no_proxy_scope():
     try:
         yield
     finally:
-        # 恢复环境变量
         for k, v in old_props.items():
             os.environ[k] = v
 
@@ -55,15 +51,14 @@ def check_socket_open(rtsp_url, timeout=1.0):
         
         if not host: return False
         
-        # print(f"📡 [Socket] Pinging {host}:{port}...")
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except Exception as e:
-        print(f"⚠️ [Socket Check Failed]: {e}")
+        # print(f"⚠️ [Socket Check Failed]: {e}")
         return False
 
 # ==========================================
-# 设备 CRUD 接口 (保持不变)
+# 设备 CRUD 接口
 # ==========================================
 
 @monitor_bp.route('/devices', methods=['GET'])
@@ -85,7 +80,8 @@ def add_device():
         data = request.json
         if Devices.query.filter_by(name=data['name']).first():
             return jsonify({'code': 400, 'msg': '名称已存在'})
-        new_device = Devices(name=data['name'], rtsp_url=data.get('rtsp', data.get('rtsp_url')), status=0)
+        # 默认启用 enabled=True
+        new_device = Devices(name=data['name'], rtsp_url=data.get('rtsp', data.get('rtsp_url')), status=0, enabled=True)
         db.session.add(new_device)
         db.session.commit()
         return jsonify({'code': 200, 'msg': '添加成功', 'data': {'id': new_device.id}})
@@ -106,7 +102,7 @@ def update_device(device_id):
             new_url = data.get('rtsp_url') or data.get('rtsp')
             if new_url != device.rtsp_url:
                 device.rtsp_url = new_url
-                stream_manager.remove_camera(device_id) # 停止旧流
+                stream_manager.remove_camera(device_id) 
                 device.status = 0
         db.session.commit()
         return jsonify({'code': 200, 'msg': '更新成功'})
@@ -133,8 +129,6 @@ def delete_device(device_id):
 # 视频流与检测核心接口
 # ==========================================
 
-# ... 保持前面的 imports 和辅助函数不变 ...
-
 @monitor_bp.route('/stream/status/<int:device_id>', methods=['GET'])
 @jwt_required()
 def check_stream_status(device_id):
@@ -142,15 +136,18 @@ def check_stream_status(device_id):
         device = Devices.query.get(device_id)
         if not device: return jsonify({'code': 404, 'msg': '设备不存在'})
 
+        # 🔥🔥🔥 修改点 1：如果设备被停用，直接拒绝检测 🔥🔥🔥
+        if device.enabled == False:
+            print(f"🚫 [Monitor] {device.name} 已停用，拒绝连接")
+            return jsonify({'code': 200, 'data': {'status': 0}, 'msg': '设备已停用，请联系管理员启用'})
+
         with no_proxy_scope():
             print(f"🔍 [Monitor] 开始检测: {device.name}")
             
             # 1. Socket 基础网络检测
-            # 手机休眠时 Ping 可能会慢，给 3 秒
             socket_ok = check_socket_open(device.rtsp_url, timeout=3.0)
             
             if not socket_ok:
-                # 给一次重试机会
                 time.sleep(0.5)
                 socket_ok = check_socket_open(device.rtsp_url, timeout=3.0)
                 
@@ -160,23 +157,14 @@ def check_stream_status(device_id):
                     db.session.commit()
                     return jsonify({'code': 200, 'data': {'status': 0}, 'msg': '无法连接主机(网络不可达)'})
             
-            # 2. 视频流智能握手 (自动重试核心)
+            # 2. 视频流智能握手
             print("✅ Socket 通畅，开始握手...")
             result_holder = {'success': False}
 
             def connect_task(url):
-                # 策略列表：专门针对手机 RTSP 设计
                 strategies = [
-                    # 第 1 步：唤醒尝试 (5秒)
-                    # 目的：如果是休眠设备，这一步通常会超时失败，但能把设备唤醒
                     ("WakeUp/UDP", "stimeout;5000000"),
-                    
-                    # 第 2 步：正式连接 (10秒)
-                    # 目的：设备醒了，这次大概率成功。如果第1步失败，这里会接力
                     ("Retry/UDP", "stimeout;10000000"),
-                    
-                    # 第 3 步：保底 TCP (10秒)
-                    # 目的：如果 UDP 实在不行，尝试 TCP
                     ("Fallback/TCP", "rtsp_transport;tcp|stimeout;10000000") 
                 ]
 
@@ -189,8 +177,6 @@ def check_stream_status(device_id):
                     try:
                         cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
                         if cap.isOpened():
-                            # 只要能读到 1 帧，就认为成功
-                            # 手机性能差，读多帧容易卡顿
                             if cap.grab(): 
                                 result_holder['success'] = True
                                 print(f"🎉 {mode} 连接成功！")
@@ -200,8 +186,6 @@ def check_stream_status(device_id):
                     except Exception as e:
                         print(f"⚠️ {mode} 失败: {e}")
                     
-                    # 失败后，休息 1 秒再试下一种策略
-                    # 这个休息非常重要！给手机 CPU 喘息时间
                     print("⏳ 等待设备响应...")
                     time.sleep(1.0)
 
@@ -209,9 +193,6 @@ def check_stream_status(device_id):
             t.daemon = True
             t.start()
             
-            # 总等待时间：5s + 1s + 10s + 1s + 10s = 27s
-            # 我们给线程 18秒 的总限时，足够跑完前两步
-            # 只要前两步有一步成功，就会立即返回
             t.join(timeout=18.0)
             
             if result_holder['success']:
@@ -231,30 +212,12 @@ def check_stream_status(device_id):
 @monitor_bp.route('/reconnect_all', methods=['POST'])
 @jwt_required()
 def reconnect_all():
-    """一键重连所有离线设备 (异步多线程)"""
+    """一键重连所有离线设备"""
     try:
-        # 1. 找出所有离线设备
-        offline_devices = Devices.query.filter_by(status=0).all()
+        # 只查找状态离线 且 已启用的设备
+        offline_devices = Devices.query.filter_by(status=0, enabled=True).all()
         if not offline_devices:
-            return jsonify({'code': 200, 'msg': '所有设备均已在线'})
-        
-        print(f"🔄 [Batch] 开始批量重连 {len(offline_devices)} 台设备...")
-
-        # 2. 定义单个检测任务 (复用之前的逻辑)
-        def single_check_task(device_id):
-            # 这里我们复用 check_stream_status 的逻辑，但为了方便，直接内部调用
-            # 注意：在 Flask 中内部调用路由函数比较麻烦，建议提取公共逻辑
-            # 这里简单起见，我们直接发起一个新的检测请求，或者直接拷贝检测代码
-            # 为了最稳妥，我们让前端去触发每个设备的检测，或者后端直接在这里跑
-            
-            # 由于 check_stream_status 里有复杂的 socket/opencv 逻辑
-            # 我们直接调用 requests 库反向请求自己，或者直接实例化检测类
-            # 但最简单的还是：只返回成功，让前端去遍历调用 check_stream_status
-            pass 
-
-        # ⚡️ 方案优化：
-        # 后端做批量检测太复杂且容易超时。
-        # 最简单的做法是：后端返回所有离线设备的 ID 列表，让前端去逐个触发 "check_stream_status"。
+            return jsonify({'code': 200, 'msg': '没有可重连的设备'})
         
         offline_ids = [d.id for d in offline_devices]
         return jsonify({
@@ -285,39 +248,23 @@ def generate_frames(device_id):
 def video_feed(device_id):
     device = Devices.query.get(device_id)
     if not device: return "Device not found", 404
+
+    # 🔥🔥🔥 修改点 2：如果设备被停用，拒绝推流 🔥🔥🔥
+    # 这是防止前端 img 标签直接通过 URL 访问的关键
+    if device.enabled == False:
+        return "Device is disabled", 403
+
+    # 如果没被停用，才允许添加到管理器
     stream_manager.add_camera(device_id, device.rtsp_url)
     return Response(stream_with_context(generate_frames(device_id)), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-# 专门处理视频播放的路由
-# 前端请求地址: /api/v1/monitor/video/static/evidence/xxx.mp4
 @monitor_bp.route('/video/<path:filename>')
 def stream_video_file(filename):
-    """
-    支持 Range 请求的视频流服务
-    """
-    # 1. 拼接绝对路径
-    # 注意：filename 可能是 "static/evidence/xxx.mp4"
-    # 我们需要把它拼接到 app 的根目录下
-    base_dir = current_app.root_path # web-flask/app
-    
-    # 如果 filename 开头带了 static/，需要处理一下路径
-    # 假设 filename 是 "static/evidence/xxx.mp4"
-    # 而文件实际在 "web-flask/app/static/evidence/xxx.mp4"
-    # 所以直接 join 即可，因为 app.root_path 指向 app 文件夹
-    # 但要注意 filename 是否包含 'app/' 前缀，如果有要去掉
+    base_dir = current_app.root_path 
     clean_filename = filename.replace('app/', '')
-    
-    # 构建绝对路径
-    # 如果 filename 是 "static/evidence/video.mp4"
-    # root_path 是 ".../app"
-    # 拼接后是 ".../app/static/evidence/video.mp4"
-    # 此时需要回退一层，因为 static 在 app 下面
-    # 这里有点绕，最稳妥的是直接拼：
     file_path = os.path.join(current_app.root_path, clean_filename)
     
-    # 如果路径不对，尝试另一种拼接（针对你现在的目录结构）
     if not os.path.exists(file_path):
-        # 尝试去掉 static 前缀再拼（防止重叠）
         if clean_filename.startswith('static/'):
              file_path = os.path.join(current_app.root_path, clean_filename)
     
@@ -330,20 +277,17 @@ def stream_video_file(filename):
     if not range_header:
         return send_file(file_path)
 
-    # 解析 Range 头部 (e.g., "bytes=0-")
     match = re.search(r'(\d+)-(\d*)', range_header)
     groups = match.groups()
 
     first_byte = int(groups[0]) if groups[0] else 0
     last_byte = int(groups[1]) if groups[1] else file_size - 1
 
-    # 限制长度，防止溢出
     if last_byte >= file_size:
         last_byte = file_size - 1
 
     length = last_byte - first_byte + 1
 
-    # 读取文件片段
     with open(file_path, 'rb') as f:
         f.seek(first_byte)
         data = f.read(length)

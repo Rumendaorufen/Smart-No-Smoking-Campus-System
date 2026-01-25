@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import DeviceManage from '../views/DeviceManage.vue'
 import AuditConsole from '../views/AuditConsole.vue'
 import AlarmArchive from '../views/AlarmArchive.vue'
+import SystemControl from '../views/SystemControl.vue'
 
 const routes = [
   {
@@ -45,6 +46,12 @@ const routes = [
   name: 'AlarmArchive',
   component: AlarmArchive,
   meta: { title: '违规历史档案', requiresAuth: true }
+  },
+  {
+    path: '/system',
+    name: 'SystemControl',
+    component: SystemControl,
+    meta: { title: '系统控制', roles: ['admin'] } // 权限控制
   }
 ]
 

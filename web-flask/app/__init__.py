@@ -3,20 +3,19 @@ from flask_socketio import SocketIO
 from flask_cors import CORS
 # ✅ 1. 引入 JWTManager
 from flask_jwt_extended import JWTManager
-from app.core.stream_loader import StreamManager
 from app.models import init_db
+
+# 🔥🔥🔥 关键点：只引入单例，绝对不要在这里重新实例化！！！
+# ❌ 错误写法: stream_manager = StreamManager()  <-- 这会创建一个新对象，导致 API 用的对象没被初始化
+# ✅ 正确写法: 直接使用从 stream_loader 导入的那个全局对象
+from app.core.stream_loader import stream_manager
 
 # 1. 初始化全局扩展
 # cors_allowed_origins="*" 允许前端跨域连接 WebSocket
 socketio = SocketIO(cors_allowed_origins="*", async_mode='threading')
-# # 显式指定 'eventlet'，或者留空让它自动检测，但不要强制设为 'threading' (性能差)
-# socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet')
 
 # ✅ 2. 实例化 JWT
 jwt = JWTManager()
-
-# 3. 初始化全局视频流管理器
-stream_manager = StreamManager()
 
 def create_app():
     app = Flask(__name__)
@@ -31,16 +30,17 @@ def create_app():
         app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:123456@localhost/smart_campus_smoking'
         app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-    # ✅ 5. JWT 配置 (必须设置密钥)
-    # 生产环境中，这个密钥应该从环境变量读取，且非常复杂
+    # ✅ 5. JWT 配置
     app.config["JWT_SECRET_KEY"] = "super-secret-key-change-this-in-production"  
     app.config["JWT_ACCESS_TOKEN_EXPIRES"] = 3600 * 24  # Token 有效期设置为 1 天
 
-    # 6. 初始化数据库 (这一步会创建表结构)
+    # 6. 初始化数据库
     init_db(app)
 
-    # 7. 将 app 实例传给全局管理器
-    # 这样录制线程才能通过 app.app_context() 访问数据库
+    # ==========================================================
+    # 🔥🔥🔥 核心修复：初始化全局单例 🔥🔥🔥
+    # 这一步将 Flask 的 app 上下文传给那个唯一的 stream_manager
+    # ==========================================================
     stream_manager.init_app(app)
 
     # 8. 配置跨域
@@ -54,16 +54,20 @@ def create_app():
     from app.api.monitor import monitor_bp
     app.register_blueprint(monitor_bp, url_prefix='/api/v1/monitor')
     
-    # ✅ 注册认证蓝图 (处理登录接口)
+    # ✅ 注册认证蓝图
     from app.api.auth import auth_bp
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')
 
-    # ✅ 新增：注册用户管理蓝图
-    # 注意 URL 前缀是 /api/v1/users
+    # ✅ 注册用户管理蓝图
     from app.api.user import user_bp
     app.register_blueprint(user_bp, url_prefix='/api/v1/users')
 
-    from app.api.alert import alert_bp  # 👈 新增导入
-    app.register_blueprint(alert_bp, url_prefix='/api/v1/alerts') # 👈 注册路径
+    # ✅ 注册报警管理蓝图
+    from app.api.alert import alert_bp  
+    app.register_blueprint(alert_bp, url_prefix='/api/v1/alerts')
+
+    # ✅ 注册系统控制蓝图
+    from app.api.system import system_bp
+    app.register_blueprint(system_bp, url_prefix='/api/v1/system')
 
     return app

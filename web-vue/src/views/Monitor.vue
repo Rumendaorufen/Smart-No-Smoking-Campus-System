@@ -59,13 +59,22 @@
           
           <template v-if="isAdmin">
             <el-button 
+              type="success" 
+              size="small" 
+              class="action-btn"
+              @click="$router.push('/system')"
+            >
+              <el-icon><Odometer /></el-icon>
+              系统控制
+            </el-button>
+            <el-button 
               type="primary" 
               size="small" 
               class="action-btn"
               @click="$router.push('/devices')"
             >
               <el-icon><VideoCameraFilled /></el-icon>
-              设备
+              设备管理
             </el-button>
 
             <el-button 
@@ -75,7 +84,7 @@
               @click="$router.push('/users')"
             >
               <el-icon><Setting /></el-icon>
-              用户
+              用户管理
             </el-button>
           </template>
 
@@ -303,7 +312,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { 
   Setting, SwitchButton, Refresh, Connection, Bell, Files,
-  FullScreen, VideoCameraFilled, Monitor, ArrowRight, Loading, Warning, CircleCloseFilled
+  FullScreen, VideoCameraFilled, Monitor, ArrowRight, Loading, Warning, CircleCloseFilled,Odometer
 } from '@element-plus/icons-vue'
 import authApi from '../api/auth'
 import { io, Socket } from 'socket.io-client' // 引入 socket

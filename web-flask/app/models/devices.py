@@ -11,7 +11,7 @@ class Devices(db.Model):  # ✅ 关键：继承 db.Model，而不是 Base
     rtsp_url = db.Column(db.String(500), nullable=False)
     area_config = db.Column(db.Text, nullable=True)
     status = db.Column(db.Integer, default=1)  # 1在线 0离线
-    
+    enabled = db.Column(db.Boolean, default=True)
     # 时间字段
     created_at = db.Column(db.DateTime, server_default=func.now())
     updated_at = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
