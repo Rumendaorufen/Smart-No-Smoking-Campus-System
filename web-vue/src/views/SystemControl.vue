@@ -2,32 +2,87 @@
   <div class="system-container">
     <div class="page-header">
       <el-button :icon="ArrowLeft" circle class="back-btn" @click="$router.push('/')" />
-      <h2>🎛️ 系统控制台</h2>
+      <h2>🎛️ 系统全景控制台</h2>
     </div>
 
-    <el-row :gutter="20" class="status-dashboard">
-      <el-col :span="6">
-        <el-card class="status-card" shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <span>CPU 负载</span>
-              <el-icon><Cpu /></el-icon>
-            </div>
-          </template>
-          <el-progress type="dashboard" :percentage="systemStats.cpu" :color="cpuColor" />
+    <el-row :gutter="20" class="row-section">
+      <el-col :span="8">
+        <el-card class="status-card chart-card" shadow="hover">
+          <div class="chart-header">
+            <div class="label"><el-icon><Cpu /></el-icon> CPU 负载</div>
+            <div class="value cpu-text">{{ systemStats.cpu }}%</div>
+          </div>
+          <div ref="cpuChartRef" class="chart-container"></div>
         </el-card>
       </el-col>
       
+      <el-col :span="8">
+        <el-card class="status-card chart-card" shadow="hover">
+          <div class="chart-header">
+            <div class="label"><el-icon><Files /></el-icon> 内存使用</div>
+            <div class="value ram-text">{{ systemStats.ram_percent }}%</div>
+          </div>
+          <div ref="ramChartRef" class="chart-container"></div>
+          <div class="chart-sub-text">{{ systemStats.ram_used }} GB 已用</div>
+        </el-card>
+      </el-col>
+
+      <el-col :span="8">
+        <el-card class="status-card chart-card" shadow="hover">
+          <div class="chart-header">
+            <div class="label"><el-icon><Monitor /></el-icon> GPU 显存 (AI核心)</div>
+            <div class="value gpu-text">{{ systemStats.gpu.mem_percent }}%</div>
+          </div>
+          <div ref="gpuChartRef" class="chart-container"></div>
+          <div class="chart-sub-text">
+            {{ systemStats.gpu.name }} ({{ systemStats.gpu.used }}/{{ systemStats.gpu.total }} GB)
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" class="row-section">
       <el-col :span="6">
-        <el-card class="status-card" shadow="hover">
+        <el-card class="status-card info-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>内存占用</span>
-              <el-icon><Files /></el-icon>
+              <span>磁盘存储 (Evidence)</span>
+              <el-icon><Coin /></el-icon>
             </div>
           </template>
-          <el-progress type="dashboard" :percentage="systemStats.ram_percent" :color="ramColor" />
-          <div class="stat-text">{{ systemStats.ram_used }} GB 已用</div>
+          <div class="disk-info">
+            <el-progress 
+              type="circle" 
+              :percentage="systemStats.disk.percent" 
+              :color="diskColor"
+              :width="100"
+            />
+            <div class="disk-text">
+              剩余 <span>{{ systemStats.disk.free }} GB</span>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+
+      <el-col :span="6">
+        <el-card class="status-card info-card" shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <span>今日概览</span>
+              <el-icon><DataLine /></el-icon>
+            </div>
+          </template>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-num danger">{{ systemStats.business.today_alarms }}</div>
+              <div class="stat-label">今日报警</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-num warning">{{ systemStats.business.pending_audit }}</div>
+              <div class="stat-label">待审核</div>
+            </div>
+          </div>
+          <div class="stat-footer">系统启动于: {{ systemStats.business.boot_time.split(' ')[1] }}</div>
         </el-card>
       </el-col>
 
@@ -41,7 +96,7 @@
           </template>
           <div class="ai-control-box">
             <div class="ai-status-text">
-              {{ systemStats.global_ai ? '引擎运行中' : '引擎已暂停' }}
+              {{ systemStats.global_ai ? '🔥 引擎运行中' : '💤 引擎已暂停' }}
             </div>
             <el-switch
               v-model="systemStats.global_ai"
@@ -54,31 +109,30 @@
               @change="(val: boolean | string | number) => handleGlobalAiToggle(val)"
             />
           </div>
-          <div class="stat-text-small">控制所有摄像头的检测功能</div>
         </el-card>
       </el-col>
-      
+
       <el-col :span="6">
-        <el-card class="status-card" shadow="hover">
+        <el-card class="status-card info-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>活跃设备</span>
+              <span>在线推流</span>
               <el-icon><VideoCamera /></el-icon>
             </div>
           </template>
           <div class="big-number">{{ systemStats.total_streams }}</div>
-          <div class="stat-text">在线推流中</div>
+          <div class="stat-text">路摄像头正在工作</div>
         </el-card>
       </el-col>
     </el-row>
 
     <div class="device-list-section">
-      <h3 class="section-title">
-        摄像头接入管理
-        <span class="sub-tip">（停用后，前台将无法连接该设备）</span>
-      </h3>
+      <div class="section-header">
+        <h3 class="section-title">摄像头接入矩阵</h3>
+      </div>
+
       <el-table 
-        :data="deviceList" 
+        :data="pagedDeviceList" 
         class="custom-table" 
         style="width: 100%"
         :header-cell-style="{ background: '#1c2538', color: '#e5eaf3', borderColor: '#363b45' }"
@@ -97,7 +151,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="接入状态 (启用/停用)" width="200" align="center">
+        <el-table-column label="接入状态" width="150" align="center">
           <template #default="{ row }">
             <el-switch
               v-model="row.enabled"
@@ -111,74 +165,135 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="pagination-wrapper">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[5, 10]"
+          :background="true"
+          layout="total, prev, pager, next"
+          :total="totalDevices"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, shallowRef, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Cpu, Files, VideoCamera, Aim } from '@element-plus/icons-vue'
+import { ArrowLeft, Cpu, Files, VideoCamera, Aim, Monitor, Coin, DataLine } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
+import * as echarts from 'echarts'
 
-// 1. 定义接口类型 (解决 TypeScript 报错的核心)
+// ✅ 修复 1: 补全 Interface，添加 ai_enabled
 interface Device {
   id: number
   name: string
   rtsp_url: string
   enabled: boolean
   is_running: boolean
-  ai_enabled: boolean
-  loading?: boolean // 可选属性
+  ai_enabled: boolean // 👈 必须加上这个
+  loading?: boolean
 }
 
 const router = useRouter()
-
-// 2. Axios 实例配置
-const request = axios.create({ 
-  baseURL: 'http://localhost:5000/api/v1',
-  timeout: 5000 
-})
+const request = axios.create({ baseURL: 'http://localhost:5000/api/v1', timeout: 5000 })
 
 request.interceptors.request.use(config => {
   const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 }, error => Promise.reject(error))
 
-request.interceptors.response.use(
-  response => response,
-  error => {
-    if (error.response && error.response.status === 401) {
-      ElMessage.error('登录已过期，请重新登录')
-      localStorage.removeItem('token')
-      localStorage.removeItem('userInfo')
-      router.push('/login')
-    }
-    return Promise.reject(error)
-  }
-)
+request.interceptors.response.use(res => res, err => {
+  if (err.response?.status === 401) { router.push('/login'); }
+  return Promise.reject(err)
+})
 
 const systemStats = reactive({
   cpu: 0,
-  ram_percent: 0,
-  ram_used: 0,
-  total_streams: 0,
-  global_ai: true
+  ram_percent: 0, ram_used: 0,
+  total_streams: 0, global_ai: true,
+  gpu: { used: 0, total: 0, percent: 0, mem_percent: 0, name: 'N/A' },
+  disk: { total: 0, used: 0, free: 0, percent: 0 },
+  business: { today_alarms: 0, pending_audit: 0, boot_time: '-' }
 })
 
-// ✅ 3. 显式指定 Ref 类型
 const deviceList = ref<Device[]>([])
 const aiLoading = ref(false)
 const timer = ref<number | null>(null)
 
-const cpuColor = [{ color: '#67c23a', percentage: 40 }, { color: '#e6a23c', percentage: 70 }, { color: '#f56c6c', percentage: 100 }]
-const ramColor = [{ color: '#409eff', percentage: 60 }, { color: '#e6a23c', percentage: 85 }, { color: '#f56c6c', percentage: 100 }]
+// Charts
+const cpuChartRef = ref(null), ramChartRef = ref(null), gpuChartRef = ref(null)
+const cpuChart = shallowRef<echarts.ECharts | null>(null)
+const ramChart = shallowRef<echarts.ECharts | null>(null)
+const gpuChart = shallowRef<echarts.ECharts | null>(null)
 
-// 获取状态
+const maxDataPoints = 60
+const history = {
+  cpu: ref(new Array(maxDataPoints).fill(0)),
+  ram: ref(new Array(maxDataPoints).fill(0)),
+  gpu: ref(new Array(maxDataPoints).fill(0))
+}
+
+const initCharts = () => {
+  if (cpuChartRef.value) {
+    cpuChart.value = echarts.init(cpuChartRef.value)
+    cpuChart.value.setOption(getChartOption('#67C23A', 'CPU'))
+  }
+  if (ramChartRef.value) {
+    ramChart.value = echarts.init(ramChartRef.value)
+    ramChart.value.setOption(getChartOption('#409EFF', 'RAM'))
+  }
+  if (gpuChartRef.value) {
+    gpuChart.value = echarts.init(gpuChartRef.value)
+    gpuChart.value.setOption(getChartOption('#E6A23C', 'VRAM'))
+  }
+  window.addEventListener('resize', handleResize)
+}
+
+const handleResize = () => {
+  cpuChart.value?.resize(); ramChart.value?.resize(); gpuChart.value?.resize();
+}
+
+const getChartOption = (color: string, name: string) => ({
+  grid: { left: 0, right: 0, top: 5, bottom: 0 },
+  xAxis: { type: 'category', show: false, boundaryGap: false },
+  yAxis: { type: 'value', min: 0, max: 100, show: false },
+  series: [{
+    name, type: 'line', showSymbol: false, smooth: true,
+    lineStyle: { width: 2, color },
+    areaStyle: {
+      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color }, { offset: 1, color: 'rgba(0,0,0,0)' }]),
+      opacity: 0.3
+    },
+    data: new Array(maxDataPoints).fill(0)
+  }]
+})
+
+const updateCharts = () => {
+  history.cpu.value.push(systemStats.cpu); history.cpu.value.shift();
+  history.ram.value.push(systemStats.ram_percent); history.ram.value.shift();
+  history.gpu.value.push(systemStats.gpu.mem_percent); history.gpu.value.shift();
+
+  cpuChart.value?.setOption({ series: [{ data: history.cpu.value }] })
+  ramChart.value?.setOption({ series: [{ data: history.ram.value }] })
+  gpuChart.value?.setOption({ series: [{ data: history.gpu.value }] })
+}
+
+const diskColor = (percentage: number) => {
+  if (percentage > 90) return '#f56c6c'
+  if (percentage > 70) return '#e6a23c'
+  return '#67c23a'
+}
+
+const currentPage = ref(1), pageSize = ref(5)
+const totalDevices = computed(() => deviceList.value.length)
+const pagedDeviceList = computed(() => deviceList.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value))
+
 const fetchStatus = async () => {
   try {
     const res = await request.get('/system/status')
@@ -188,56 +303,72 @@ const fetchStatus = async () => {
       systemStats.ram_percent = d.ram_percent
       systemStats.ram_used = d.ram_used
       systemStats.total_streams = d.total_streams
+      systemStats.gpu = d.gpu || { mem_percent: 0, used: 0, total: 0, name: 'No GPU' }
+      systemStats.disk = d.disk || { percent: 0, free: 0 }
+      systemStats.business = d.business || { today_alarms: 0, pending_audit: 0, boot_time: '-' }
       
-      if (!aiLoading.value) {
-        systemStats.global_ai = d.global_ai
-      }
+      if (!aiLoading.value) systemStats.global_ai = d.global_ai
       
+      // ✅ 修复 2: 显式声明 newDevices 类型，防止 TS 推断错误
       const newDevices: Device[] = d.devices
-      if (deviceList.value.length === 0) {
-        deviceList.value = newDevices.map(dev => ({ ...dev, loading: false }))
-      } else {
-        deviceList.value = newDevices.map(newDev => {
-          const oldDev = deviceList.value.find(o => o.id === newDev.id)
-          return {
-            ...newDev,
-            loading: oldDev ? oldDev.loading : false
-          }
-        })
+      
+      newDevices.forEach(newDev => {
+        // 使用可选链或非空断言并不总是完美，最稳妥的是 if 判断
+        const existingDev = deviceList.value.find(o => o.id === newDev.id)
+        
+        if (existingDev) {
+          // ✅ TS 现在知道 existingDev 肯定不是 undefined
+          existingDev.name = newDev.name
+          existingDev.rtsp_url = newDev.rtsp_url
+          existingDev.enabled = newDev.enabled
+          existingDev.is_running = newDev.is_running
+          existingDev.ai_enabled = newDev.ai_enabled // 这里的报错应该消失了
+        } else {
+          deviceList.value.push({ ...newDev, loading: false })
+        }
+      })
+
+      // 2. 清理已删除的设备 (可选)
+      if (deviceList.value.length > newDevices.length) {
+         const newIds = new Set(newDevices.map(d => d.id))
+         // 倒序遍历删除
+         for (let i = deviceList.value.length - 1; i >= 0; i--) {
+            // ✅ 修复：先获取对象，TypeScript 就能正确推断类型了
+            const currentItem = deviceList.value[i]
+            
+            // ✅ 修复：加上 currentItem && 判断，确保对象存在再访问 .id
+            if (currentItem && !newIds.has(currentItem.id)) {
+               deviceList.value.splice(i, 1)
+            }
+         }
       }
+      updateCharts()
     }
-  } catch (e) {
-    console.error("Fetch status error:", e)
-  }
+  } catch (e) { console.error(e) }
 }
 
-// 切换设备启用/停用
-// ✅ 4. 修复 TS 类型：显式声明 val 类型
+// 参数类型
 const handleDeviceToggle = async (row: Device, val: boolean | string | number) => {
   const isEnabled = !!val 
-  
   row.loading = true
   try {
     const res = await request.post('/system/control/device', { id: row.id, enable: isEnabled })
     if (res.data.code === 200) {
       ElMessage.success(isEnabled ? `设备 ${row.name} 已启用` : `设备 ${row.name} 已停用`)
+      row.enabled = isEnabled 
     } else {
-      row.enabled = !isEnabled // 失败回滚
+      row.enabled = !isEnabled 
       ElMessage.error(res.data.msg || '操作失败')
     }
-  } catch (e: any) {
+  } catch (e) { 
     row.enabled = !isEnabled
-    if (!axios.isAxiosError(e) || e.response?.status !== 401) {
-       ElMessage.error('网络请求失败')
-    }
-  } finally {
-    row.loading = false
-    setTimeout(fetchStatus, 500)
+    ElMessage.error('网络请求失败') 
+  } finally { 
+    row.loading = false 
+    setTimeout(fetchStatus, 500) 
   }
 }
 
-// 切换全局 AI
-// ✅ 5. 修复 TS 类型
 const handleGlobalAiToggle = async (val: boolean | string | number) => {
   const isEnabled = !!val
   aiLoading.value = true
@@ -246,63 +377,84 @@ const handleGlobalAiToggle = async (val: boolean | string | number) => {
     if (res.data.code === 200) {
       ElMessage.success(`AI 引擎已${isEnabled ? '启动' : '暂停'}`)
     } else {
-      systemStats.global_ai = !isEnabled
-      ElMessage.error(res.data.msg)
+      systemStats.global_ai = !isEnabled; ElMessage.error(res.data.msg)
     }
-  } catch (e: any) {
-    systemStats.global_ai = !isEnabled
-    if (!axios.isAxiosError(e) || e.response?.status !== 401) {
-       ElMessage.error('请求失败')
-    }
-  } finally {
-    aiLoading.value = false
-  }
+  } catch (e) { systemStats.global_ai = !isEnabled; ElMessage.error('请求失败') } 
+  finally { aiLoading.value = false }
 }
 
 onMounted(() => {
   fetchStatus()
+  nextTick(() => initCharts())
   timer.value = window.setInterval(fetchStatus, 3000)
 })
 
 onUnmounted(() => {
   if (timer.value) clearInterval(timer.value)
+  window.removeEventListener('resize', handleResize)
+  cpuChart.value?.dispose(); ramChart.value?.dispose(); gpuChart.value?.dispose()
 })
 </script>
 
 <style scoped>
 .system-container { min-height: 100vh; background: #0d1119; color: #fff; padding: 30px; }
-.page-header { display: flex; align-items: center; margin-bottom: 30px; gap: 15px; }
-.page-header h2 { margin: 0; background: linear-gradient(90deg, #409eff, #fff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.page-header { display: flex; align-items: center; margin-bottom: 20px; gap: 15px; }
+.page-header h2 { margin: 0; font-size: 22px; background: linear-gradient(90deg, #409eff, #fff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .back-btn { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: #fff; }
-.back-btn:hover { background: #409eff; border-color: #409eff; }
+.row-section { margin-bottom: 20px; }
 
-/* 仪表盘 */
-.status-card { background: rgba(30, 35, 45, 0.6); border: 1px solid rgba(64, 158, 255, 0.1); color: #fff; text-align: center; backdrop-filter: blur(10px); }
-:deep(.el-card__header) { border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding: 10px 15px; }
-.card-header { display: flex; justify-content: space-between; align-items: center; font-size: 14px; color: #909399; }
-.big-number { font-size: 40px; font-weight: bold; color: #409eff; margin: 10px 0; }
-.stat-text { font-size: 12px; color: #909399; margin-top: 5px; }
+/* 通用卡片 */
+.status-card { 
+  background: rgba(30, 35, 45, 0.6); border: 1px solid rgba(64, 158, 255, 0.1); 
+  color: #fff; backdrop-filter: blur(10px); height: 160px; display: flex; flex-direction: column;
+}
+:deep(.el-card__body) { flex: 1; padding: 15px 20px; display: flex; flex-direction: column; justify-content: center; position: relative; }
 
-/* AI 卡片特效 */
+/* 图表卡片 */
+.chart-card :deep(.el-card__body) { padding: 0; }
+.chart-header { position: absolute; top: 15px; left: 20px; z-index: 10; }
+.chart-header .label { font-size: 14px; color: #909399; display: flex; align-items: center; gap: 5px; }
+.chart-header .value { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; margin-top: 5px; }
+.cpu-text { color: #67C23A; } .ram-text { color: #409EFF; } .gpu-text { color: #E6A23C; }
+.chart-container { width: 100%; height: 100%; }
+.chart-sub-text { position: absolute; bottom: 10px; right: 15px; font-size: 12px; color: #909399; }
+
+/* 信息卡片 (Info Card) */
+.info-card :deep(.el-card__header) { border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding: 10px 15px; display: block; }
+.card-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #909399; }
+
+/* 磁盘信息 */
+.disk-info { display: flex; align-items: center; justify-content: center; gap: 20px; }
+.disk-text { text-align: left; font-size: 12px; color: #909399; }
+.disk-text span { display: block; font-size: 18px; color: #fff; font-weight: bold; margin-top: 5px; }
+
+/* 业务统计网格 */
+.stats-grid { display: flex; justify-content: space-around; margin-bottom: 10px; }
+.stat-item { text-align: center; }
+.stat-num { font-size: 24px; font-weight: bold; }
+.stat-num.danger { color: #F56C6C; } .stat-num.warning { color: #E6A23C; }
+.stat-label { font-size: 12px; color: #909399; margin-top: 5px; }
+.stat-footer { font-size: 11px; color: #606266; text-align: center; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px; }
+
+/* AI 卡片 */
 .ai-card.ai-active { border-color: rgba(103, 194, 58, 0.5); box-shadow: 0 0 15px rgba(103, 194, 58, 0.2) inset; }
-.ai-control-box { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 15px 0; }
-.ai-status-text { font-weight: bold; color: #fff; }
-.ai-card.ai-active .ai-status-text { color: #67c23a; text-shadow: 0 0 5px #67c23a; }
-.stat-text-small { font-size: 12px; color: #606266; }
+.ai-control-box { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.ai-status-text { font-weight: bold; font-size: 16px; }
+.big-number { font-size: 40px; font-weight: bold; color: #409eff; margin: 10px 0; text-align: center; }
+.stat-text { font-size: 12px; color: #909399; text-align: center; }
 
-/* 列表区域 */
-.device-list-section { margin-top: 40px; background: rgba(22, 33, 52, 0.6); padding: 20px; border-radius: 8px; border: 1px solid rgba(64, 158, 255, 0.1); }
-.section-title { margin-top: 0; margin-bottom: 20px; font-size: 18px; border-left: 4px solid #409eff; padding-left: 10px; }
-.sub-tip { font-size: 12px; color: #909399; font-weight: normal; margin-left: 10px; }
-
-/* 状态点 */
+/* 列表 & 分页 */
+.device-list-section { margin-top: 10px; background: rgba(22, 33, 52, 0.6); padding: 20px; border-radius: 8px; }
+.section-title { margin: 0 0 15px 0; font-size: 16px; border-left: 4px solid #409eff; padding-left: 10px; }
 .status-indicator { display: flex; align-items: center; gap: 6px; justify-content: center; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.green { background: #67c23a; box-shadow: 0 0 5px #67c23a; }
 .dot.gray { background: #909399; }
+.pagination-wrapper { margin-top: 15px; display: flex; justify-content: flex-end; }
 
-/* 表格样式 */
+/* 表格覆盖 */
 .custom-table { background-color: transparent !important; --el-table-border-color: #363b45; --el-table-bg-color: transparent; --el-table-tr-bg-color: transparent; }
 :deep(.el-table__inner-wrapper::before) { display: none; }
 :deep(.el-table__row:hover) { background-color: rgba(64, 158, 255, 0.1) !important; }
+:deep(.el-pagination.is-background .el-pager li:not(.is-disabled)) { background-color: #1c2538; color: #fff; }
 </style>
