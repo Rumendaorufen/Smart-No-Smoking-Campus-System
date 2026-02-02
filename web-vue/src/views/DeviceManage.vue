@@ -1,4 +1,3 @@
-<!-- web-vue\src\views\DeviceManage.vue -->
 <template>
   <div class="device-manage-container">
     
@@ -67,7 +66,7 @@
 
       <div class="video-grid" v-loading="loading">
         <div 
-          v-for="device in deviceList" 
+          v-for="device in pagedDeviceList" 
           :key="device.id" 
           :id="'card-' + device.id"
           class="video-card"
@@ -131,6 +130,19 @@
           <el-empty description="暂无设备，请点击左侧添加" />
         </div>
       </div>
+
+      <div class="pagination-wrapper">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[8, 12, 16, 24]"
+          :background="true"
+          layout="total, sizes, prev, pager, next, jumper"
+          :total="totalDevices"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
     </div>
 
     <el-dialog 
@@ -163,7 +175,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useDeviceStore } from '../stores/device' // ✅ 引入 Store
+import { useDeviceStore } from '../stores/device'
 import { storeToRefs } from 'pinia'
 import deviceApi from '../api/device'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -172,6 +184,33 @@ import {
   RefreshRight, Warning, Connection
 } from '@element-plus/icons-vue'
 
+// 使用 Pinia Store
+const deviceStore = useDeviceStore()
+const { deviceList, loading } = storeToRefs(deviceStore)
+
+// ========== 分页逻辑 (新增) ==========
+const currentPage = ref(1)
+const pageSize = ref(8) // 默认每页显示8个，正好两行
+
+const totalDevices = computed(() => deviceList.value.length)
+
+// 计算当前页显示的设备
+const pagedDeviceList = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return deviceList.value.slice(start, end)
+})
+
+const handleSizeChange = (val: number) => {
+  pageSize.value = val
+  currentPage.value = 1
+}
+
+const handleCurrentChange = (val: number) => {
+  currentPage.value = val
+}
+// ====================================
+
 const isGlobalRetrying = computed(() => {
   return deviceList.value.some(d => d.isRetrying)
 })
@@ -179,23 +218,18 @@ const isGlobalRetrying = computed(() => {
 const handleReconnectAll = () => {
   deviceStore.reconnectAll()
 }
-// 使用 Pinia Store
-const deviceStore = useDeviceStore()
-// 使用 storeToRefs 保持响应性 (解构 state)
-const { deviceList, loading } = storeToRefs(deviceStore)
 
-// 弹窗相关 (UI 状态，无需存入 Pinia)
+// 弹窗相关
 const dialogVisible = ref(false)
 const dialogMode = ref<'add' | 'edit'>('add')
 const currentId = ref<number | null>(null)
 const form = ref({ name: '', rtsp_url: '' })
 
-// 计算属性 (基于 Store 的数据)
+// 统计
 const onlineCount = computed(() => deviceList.value.filter(d => d.status === 1).length)
 const offlineCount = computed(() => deviceList.value.filter(d => d.status !== 1).length)
 
-// --- 方法：代理到 Store ---
-
+// --- Store 代理 ---
 const refreshAll = () => {
   deviceStore.streamVersion++
   deviceStore.fetchDevices(false)
@@ -214,8 +248,7 @@ const handleVideoError = (device: any) => {
   deviceStore.handleVideoError(device.id)
 }
 
-// --- CRUD 操作 (API 调用保留在这里，或者也可以移入 Store) ---
-
+// --- CRUD ---
 const openDialog = (mode: 'add' | 'edit', row?: any) => {
   dialogMode.value = mode
   dialogVisible.value = true
@@ -240,8 +273,6 @@ const handleSubmit = async () => {
       if (res.code === 200) ElMessage.success('更新成功')
     }
     dialogVisible.value = false
-    
-    // 操作成功后，刷新 Store 列表
     deviceStore.fetchDevices(false) 
     deviceStore.streamVersion++
   } catch (e) {}
@@ -258,30 +289,39 @@ const handleDelete = (row: any) => {
     }).catch(() => {})
 }
 
-// 辅助
+// 辅助功能
 const scrollToCard = (id: number) => {
-  const el = document.getElementById(`card-${id}`)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // 注意：如果分页了，点击侧边栏索引可能需要跳转页码
+  const index = deviceList.value.findIndex(d => d.id === id)
+  if (index !== -1) {
+    // 计算该设备在第几页
+    const targetPage = Math.ceil((index + 1) / pageSize.value)
+    if (currentPage.value !== targetPage) {
+      currentPage.value = targetPage
+    }
+    // 等待 DOM 更新后滚动
+    setTimeout(() => {
+      const el = document.getElementById(`card-${id}`)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+  }
 }
+
 const formatTime = (timeStr: string) => {
   if(!timeStr) return ''
   return new Date(timeStr).toLocaleDateString()
 }
 
-// --- 生命周期 ---
 onMounted(() => {
-  // 进入页面，启动全局轮询
   deviceStore.startPolling()
 })
 
 onUnmounted(() => {
-  // 离开页面，停止轮询 (防止后台跑流量)
   deviceStore.stopPolling()
 })
 </script>
 
 <style scoped>
-/* 样式保持不变 */
 .device-manage-container {
   display: flex;
   height: 100vh;
@@ -383,6 +423,7 @@ onUnmounted(() => {
   align-items: center;
   padding: 0 30px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0; /* 防止头部被压缩 */
 }
 .grid-header .title { font-size: 18px; font-weight: bold; }
 
@@ -405,6 +446,7 @@ onUnmounted(() => {
   transition: transform 0.2s, box-shadow 0.2s;
   display: flex;
   flex-direction: column;
+  height: 300px; /* 固定高度防止抖动 */
 }
 
 .video-card:hover {
@@ -421,19 +463,22 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
-.card-title { display: flex; align-items: center; gap: 8px; }
+.card-title { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.card-title .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .live-tag { background: #f56c6c; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
 .offline-tag { background: #909399; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
-.card-time { font-size: 12px; color: #606266; }
+.card-time { font-size: 12px; color: #606266; flex-shrink: 0; }
 
 .card-video {
-  height: 180px; 
+  flex: 1; /* 撑满剩余空间 */
   background: #000;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 .card-video img { width: 100%; height: 100%; object-fit: contain; }
 
@@ -456,6 +501,7 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
 }
 .rtsp-info {
   font-size: 12px; color: #555; width: 180px;
@@ -528,6 +574,32 @@ onUnmounted(() => {
   border-top-color: #409eff;
   border-radius: 50%;
   animation: spin 1s linear infinite;
+}
+
+/* ✅ 新增：分页器样式 */
+.pagination-wrapper {
+  padding: 15px 30px;
+  background: rgba(22, 33, 52, 0.9);
+  border-top: 1px solid rgba(64, 158, 255, 0.2);
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+:deep(.el-pagination.is-background .el-pager li:not(.is-disabled)) {
+  background-color: #1c2538;
+  color: #fff;
+  border: 1px solid #363b45;
+}
+:deep(.el-pagination.is-background .el-pager li.is-active) {
+  background-color: #409eff;
+  border-color: #409eff;
+}
+:deep(.el-pagination.is-background .btn-prev), 
+:deep(.el-pagination.is-background .btn-next) {
+  background-color: #1c2538;
+  color: #fff;
+  border: 1px solid #363b45;
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }

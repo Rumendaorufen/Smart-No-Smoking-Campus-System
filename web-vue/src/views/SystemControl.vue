@@ -129,6 +129,29 @@
     <div class="device-list-section">
       <div class="section-header">
         <h3 class="section-title">摄像头接入矩阵</h3>
+        
+        <div class="batch-actions">
+          <el-button 
+            type="success" 
+            size="small" 
+            plain
+            :icon="VideoPlay"
+            @click="handleBatchToggle(true)"
+            :loading="batchLoading"
+          >
+            一键开启全部
+          </el-button>
+          <el-button 
+            type="danger" 
+            size="small" 
+            plain 
+            :icon="SwitchButton"
+            @click="handleBatchToggle(false)"
+            :loading="batchLoading"
+          >
+            一键暂停全部
+          </el-button>
+        </div>
       </div>
 
       <el-table 
@@ -183,19 +206,21 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, computed, shallowRef, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Cpu, Files, VideoCamera, Aim, Monitor, Coin, DataLine } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { 
+  ArrowLeft, Cpu, Files, VideoCamera, Aim, Monitor, Coin, DataLine,
+  VideoPlay, SwitchButton // 引入新图标
+} from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import * as echarts from 'echarts'
 
-// ✅ 修复 1: 补全 Interface，添加 ai_enabled
 interface Device {
   id: number
   name: string
   rtsp_url: string
   enabled: boolean
   is_running: boolean
-  ai_enabled: boolean // 👈 必须加上这个
+  ai_enabled: boolean
   loading?: boolean
 }
 
@@ -224,6 +249,7 @@ const systemStats = reactive({
 
 const deviceList = ref<Device[]>([])
 const aiLoading = ref(false)
+const batchLoading = ref(false) // ✅ 批量操作 loading
 const timer = ref<number | null>(null)
 
 // Charts
@@ -309,34 +335,28 @@ const fetchStatus = async () => {
       
       if (!aiLoading.value) systemStats.global_ai = d.global_ai
       
-      // ✅ 修复 2: 显式声明 newDevices 类型，防止 TS 推断错误
       const newDevices: Device[] = d.devices
       
       newDevices.forEach(newDev => {
-        // 使用可选链或非空断言并不总是完美，最稳妥的是 if 判断
         const existingDev = deviceList.value.find(o => o.id === newDev.id)
-        
         if (existingDev) {
-          // ✅ TS 现在知道 existingDev 肯定不是 undefined
           existingDev.name = newDev.name
           existingDev.rtsp_url = newDev.rtsp_url
-          existingDev.enabled = newDev.enabled
+          // 如果正在进行批量操作或单点操作，不要覆盖 enabled 状态，防止 UI 跳变
+          if (!batchLoading.value && !existingDev.loading) {
+             existingDev.enabled = newDev.enabled
+          }
           existingDev.is_running = newDev.is_running
-          existingDev.ai_enabled = newDev.ai_enabled // 这里的报错应该消失了
+          existingDev.ai_enabled = newDev.ai_enabled
         } else {
           deviceList.value.push({ ...newDev, loading: false })
         }
       })
 
-      // 2. 清理已删除的设备 (可选)
       if (deviceList.value.length > newDevices.length) {
          const newIds = new Set(newDevices.map(d => d.id))
-         // 倒序遍历删除
          for (let i = deviceList.value.length - 1; i >= 0; i--) {
-            // ✅ 修复：先获取对象，TypeScript 就能正确推断类型了
             const currentItem = deviceList.value[i]
-            
-            // ✅ 修复：加上 currentItem && 判断，确保对象存在再访问 .id
             if (currentItem && !newIds.has(currentItem.id)) {
                deviceList.value.splice(i, 1)
             }
@@ -347,7 +367,6 @@ const fetchStatus = async () => {
   } catch (e) { console.error(e) }
 }
 
-// 参数类型
 const handleDeviceToggle = async (row: Device, val: boolean | string | number) => {
   const isEnabled = !!val 
   row.loading = true
@@ -367,6 +386,57 @@ const handleDeviceToggle = async (row: Device, val: boolean | string | number) =
     row.loading = false 
     setTimeout(fetchStatus, 500) 
   }
+}
+
+// ✅ 新增：一键批量控制函数
+const handleBatchToggle = async (enable: boolean) => {
+  const actionText = enable ? '开启' : '暂停'
+  
+  // 1. 过滤出需要变更的设备 (例如开启时，只操作当前是关闭状态的设备)
+  const targets = deviceList.value.filter(d => d.enabled !== enable)
+  
+  if (targets.length === 0) {
+    return ElMessage.info(`所有设备已经处于${actionText}状态`)
+  }
+
+  // 2. 确认框
+  try {
+    await ElMessageBox.confirm(
+      `确定要一键【${actionText}】这 ${targets.length} 台设备吗？\n这就需要一定时间处理。`, 
+      '批量操作确认', 
+      {
+        confirmButtonText: '确定执行',
+        cancelButtonText: '取消',
+        type: enable ? 'success' : 'warning'
+      }
+    )
+  } catch {
+    return // 用户取消
+  }
+
+  batchLoading.value = true
+  
+  // 3. 并发执行请求 (前端并发，无需改后端)
+  const promises = targets.map(async (device) => {
+    device.loading = true // 让表格行也转圈
+    try {
+      const res = await request.post('/system/control/device', { id: device.id, enable })
+      if (res.data.code === 200) {
+        device.enabled = enable
+      }
+    } catch (e) {
+      console.error(`Device ${device.id} fail`)
+    } finally {
+      device.loading = false
+    }
+  })
+
+  // 4. 等待所有完成
+  await Promise.all(promises)
+  
+  ElMessage.success(`批量${actionText}操作完成`)
+  batchLoading.value = false
+  fetchStatus() // 最后刷新一次总状态
 }
 
 const handleGlobalAiToggle = async (val: boolean | string | number) => {
@@ -445,7 +515,19 @@ onUnmounted(() => {
 
 /* 列表 & 分页 */
 .device-list-section { margin-top: 10px; background: rgba(22, 33, 52, 0.6); padding: 20px; border-radius: 8px; }
-.section-title { margin: 0 0 15px 0; font-size: 16px; border-left: 4px solid #409eff; padding-left: 10px; }
+
+/* ✅ 修改：Header 改为 Flex 布局，适应右侧按钮 */
+.section-header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  margin-bottom: 15px; 
+  border-left: 4px solid #409eff; 
+  padding-left: 10px; 
+}
+.section-title { margin: 0; font-size: 16px; }
+.batch-actions { display: flex; gap: 10px; }
+
 .status-indicator { display: flex; align-items: center; gap: 6px; justify-content: center; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.green { background: #67c23a; box-shadow: 0 0 5px #67c23a; }

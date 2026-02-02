@@ -1,4 +1,3 @@
-<!-- web-vue\src\views\Monitor.vue -->
 <template>
   <div class="monitor-screen">
     <div class="top-bar">
@@ -110,18 +109,24 @@
             系统状态
           </div>
           <div class="status-list">
-            <div class="status-row active">
-              <span class="status-icon">●</span>
+            <div class="status-row" :class="{ active: systemStatus.total_streams > 0 }">
+              <span class="status-icon" :style="{ color: systemStatus.total_streams > 0 ? '#67c23a' : '#909399' }">●</span>
               <span>视频流服务</span>
-              <span class="status-tag">运行中</span>
+              <span class="status-tag" :class="systemStatus.total_streams > 0 ? 'online' : 'offline'">
+                {{ systemStatus.total_streams > 0 ? '推流中' : '空闲' }}
+              </span>
             </div>
-            <div class="status-row active">
-              <span class="status-icon">●</span>
+
+            <div class="status-row" :class="{ active: systemStatus.global_ai }">
+              <span class="status-icon" :style="{ color: systemStatus.global_ai ? '#67c23a' : '#f56c6c' }">●</span>
               <span>AI 检测引擎</span>
-              <span class="status-tag">运行中</span>
+              <span class="status-tag" :class="systemStatus.global_ai ? 'online' : 'offline'">
+                {{ systemStatus.global_ai ? '运行中' : '已暂停' }}
+              </span>
             </div>
-            <div class="status-row active">
-              <span class="status-icon">●</span>
+
+            <div class="status-row" :class="{ active: isSocketConnected }">
+              <span class="status-icon" :style="{ color: isSocketConnected ? '#67c23a' : '#f56c6c' }">●</span>
               <span>WebSocket</span>
               <span class="status-tag" :class="isSocketConnected ? 'online' : 'offline'">
                 {{ isSocketConnected ? '已连接' : '断开' }}
@@ -167,7 +172,7 @@
           class="monitor-player-box" 
           :class="{ 
             'offline': currentDevice.status !== 1,
-            'is-alarm': alarmState[currentDevice.id] // 🔥 红框报警特效
+            'is-alarm': alarmState[currentDevice.id] 
           }"
         >
           <div class="player-header">
@@ -265,7 +270,7 @@
               :class="{ 
                 'active': currentDevice && currentDevice.id === device.id,
                 'offline': device.status !== 1,
-                'is-alarm': alarmState[device.id] // 🔥 列表项也闪烁
+                'is-alarm': alarmState[device.id] 
               }"
               @click="switchDevice(device)"
             >
@@ -305,22 +310,49 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '../stores/device'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { 
   Setting, SwitchButton, Refresh, Connection, Bell, Files,
-  FullScreen, VideoCameraFilled, Monitor, ArrowRight, Loading, Warning, CircleCloseFilled,Odometer
+  FullScreen, VideoCameraFilled, Monitor, ArrowRight, Loading, Warning, CircleCloseFilled, Odometer
 } from '@element-plus/icons-vue'
 import authApi from '../api/auth'
-import { io, Socket } from 'socket.io-client' // 引入 socket
+import axios from 'axios' // 引入 axios 直接请求 system 状态
+import { io, Socket } from 'socket.io-client' 
+
+// ========== 1. 系统状态同步 (新增) ==========
+const systemStatus = reactive({
+  total_streams: 0,
+  global_ai: false // 默认为 false，等待后端数据
+})
+
+// 简单封装请求
+const request = axios.create({ baseURL: 'http://localhost:5000/api/v1', timeout: 5000 })
+request.interceptors.request.use(config => {
+  const token = localStorage.getItem('token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+const fetchSystemStatus = async () => {
+  try {
+    const res = await request.get('/system/status')
+    if (res.data.code === 200) {
+      const d = res.data.data
+      systemStatus.total_streams = d.total_streams
+      systemStatus.global_ai = d.global_ai // ✅ 关键：同步后端真实 AI 状态
+    }
+  } catch (e) { console.error(e) }
+}
+// ==========================================
 
 // ========== WebSocket 逻辑 ==========
 const socket = ref<Socket | null>(null)
 const isSocketConnected = ref(false)
-const alarmState = ref<Record<number, boolean>>({}) // 存储报警状态
+const alarmState = ref<Record<number, boolean>>({}) 
 
 const initSocket = () => {
   const BASE_URL = 'http://localhost:5000'
@@ -330,42 +362,28 @@ const initSocket = () => {
   })
 
   socket.value.on('connect', () => {
-    console.log('✅ WebSocket 已连接')
     isSocketConnected.value = true
   })
 
   socket.value.on('disconnect', () => {
-    console.log('❌ WebSocket 断开')
     isSocketConnected.value = false
   })
 
-  // 监听报警
   socket.value.on('alarm_event', (data: any) => {
-    console.log('🔥 收到报警:', data)
     triggerAlarmEffect(data.device_id, data.msg)
   })
 }
 
-// 触发报警特效
 const triggerAlarmEffect = (deviceId: number, msg: string) => {
-  // 1. 开启状态
   alarmState.value[deviceId] = true
-
-  // 2. 弹窗通知
   ElNotification({
     title: '⚠️ 发现吸烟行为',
     message: `${msg} (点击去处理)`,
     type: 'warning',
     duration: 5000,
-    onClick: () => {
-      router.push('/audit')
-    }
+    onClick: () => { router.push('/audit') }
   })
-
-  // 3. 5秒后自动关闭红框
-  setTimeout(() => {
-    alarmState.value[deviceId] = false
-  }, 5000)
+  setTimeout(() => { alarmState.value[deviceId] = false }, 5000)
 }
 // ===================================
 
@@ -390,6 +408,7 @@ const currentTime = ref('')
 const currentDate = ref('')
 
 let timeTimer: any = null
+let statusTimer: any = null // ✅ 新增状态轮询定时器
 
 // 权限逻辑
 const userInfoStr = localStorage.getItem('userInfo')
@@ -406,7 +425,7 @@ const handleLogout = async () => {
     try { await authApi.logout() } catch(e) {}
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
-    if (socket.value) socket.value.disconnect() // 断开 socket
+    if (socket.value) socket.value.disconnect() 
     router.push('/login')
   }).catch(() => {})
 }
@@ -455,14 +474,20 @@ const updateTime = () => {
 onMounted(() => {
   updateTime()
   timeTimer = setInterval(updateTime, 1000)
+  
   deviceStore.startPolling()
-  initSocket() // ✅ 启动 Socket
+  initSocket()
+  
+  // ✅ 启动系统状态轮询 (3秒一次)
+  fetchSystemStatus()
+  statusTimer = setInterval(fetchSystemStatus, 3000)
 })
 
 onUnmounted(() => {
   if (timeTimer) clearInterval(timeTimer)
+  if (statusTimer) clearInterval(statusTimer) // ✅ 清理定时器
   deviceStore.stopPolling()
-  if (socket.value) socket.value.disconnect() // ✅ 清理 Socket
+  if (socket.value) socket.value.disconnect() 
 })
 
 const viewFullScreen = (deviceId: number) => {
@@ -521,6 +546,7 @@ const viewFullScreen = (deviceId: number) => {
 .status-row .status-icon { color: #67c23a; }
 .status-tag { margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(103, 194, 58, 0.2); color: #67c23a; }
 .status-tag.offline { background: rgba(245, 108, 108, 0.2); color: #f56c6c; }
+.status-tag.online { background: rgba(103, 194, 58, 0.2); color: #67c23a; }
 
 .action-buttons { display: flex; flex-direction: column; gap: 10px; }
 .action-buttons .el-button { width: 100%; margin: 0; justify-content: center; }
