@@ -124,19 +124,24 @@ class StreamLoader:
         try:
             if self.cap: self.cap.release()
             
-            # 使用 UDP 模式 (根据你之前的调试结果，threading 模式下 UDP 较稳)
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp|stimeout;3000000|max_delay;500000"
+            # 🚀 核心修复 1: 强制使用 TCP (rtsp_transport;tcp)
+            # TCP 保证数据包按顺序到达，绝不会出现花屏和 h264 error
+            # 增大 stimeout (超时时间) 到 5秒 (5000000微秒)，防止网络波动误判断流
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|max_delay;500000"
+            
             self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             
             if self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_N_THREADS, 1)
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) 
+                # 🚀 核心修复 2: 禁用 OpenCV 内部缓冲区，避免延时累积
+                # BUFFERSIZE=0 意味着一旦读慢了，旧帧直接丢弃，永远只拿最新帧
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 0) 
                 
-                logger.info(f"✅ Cam {self.camera_id} Connected.")
+                logger.info(f"✅ Cam {self.camera_id} Connected (TCP Mode).")
                 self._update_db_status(1)
                 self.consecutive_errors = 0 
                 return True
             else:
+                logger.warning(f"❌ Cam {self.camera_id} Failed to open RTSP stream.")
                 self._update_db_status(0)
         except Exception as e:
             logger.error(f"Connection error: {e}")

@@ -46,7 +46,7 @@ class SmokingDetector:
         
         # 烟头检测参数
         self.smoke_imgsz = 640   
-        self.smoke_conf = 0.6
+        self.smoke_conf = 0.7
 
         self.max_persons_per_frame = 5 
         
