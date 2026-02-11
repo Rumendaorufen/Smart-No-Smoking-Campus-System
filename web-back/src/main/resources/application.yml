@@ -1,0 +1,35 @@
+server:
+  port: 8080 # 避开 Python 的 5000 和 Vue 的 5173
+
+spring:
+  application:
+    name: smart-campus-backend
+
+  # 1. 数据库配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 🚨 注意修改数据库名为 smart_campus，并确保 MySQL 里已创建该库
+    url: jdbc:mysql://localhost:3308/smart_campus_smoking?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456 # 👈 这里要改！
+
+  # 2. Redis 配置
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+  # 3. MongoDB 配置 (可选，如果暂没装可以注释掉)
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/smart_campus_logs
+
+# 4. MyBatis-Plus 配置
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 开启控制台打印 SQL，调试必备
+    map-underscore-to-camel-case: true # 开启下划线转驼峰 (user_name -> userName)
+  global-config:
+    db-config:
+      id-type: auto # 主键自增
