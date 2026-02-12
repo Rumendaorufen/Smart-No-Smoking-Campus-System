@@ -1,19 +1,19 @@
-// src/stores/device.ts
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import deviceApi from '../api/device'
+import deviceApi from '../api/device' // 🚀 确保此文件已定义 getStatusOnly 方法
 import { ElMessage } from 'element-plus'
 
 // 定义设备接口
 export interface DeviceVO {
   id: number
   name: string
-  rtsp_url: string
-  status: number // 1:在线, 0:离线
+  rtspUrl: string 
+  status: number    // 1:在线, 0:离线
+  enabled: boolean  // 🚀 核心：启停状态
   created_at: string
   isRetrying?: boolean // UI状态：是否正在重连
   failTip?: string     // UI状态：错误提示
-  isLoading?: boolean  // UI状态：是否正在加载图片
+  isVideoError?: boolean // UI状态：视频加载错误
 }
 
 export const useDeviceStore = defineStore('device', () => {
@@ -25,9 +25,11 @@ export const useDeviceStore = defineStore('device', () => {
 
   // --- Actions ---
 
-  // 1. 获取视频流地址 (计算属性风格的 helper)
+  // 1. 获取视频流地址 (Helper)
   const getStreamUrl = (id: number) => {
-    return `${import.meta.env.VITE_API_BASE_URL}/monitor/stream/${id}?v=${streamVersion.value}`
+    // 自动读取环境变量中的 AI 地址
+    const aiBase = import.meta.env.VITE_APP_AI_API || 'http://localhost:5000'
+    return `${aiBase}/api/v1/monitor/stream/${id}?v=${streamVersion.value}`
   }
 
   // 2. 更新单个设备的本地状态 (Helper)
@@ -38,101 +40,85 @@ export const useDeviceStore = defineStore('device', () => {
     }
   }
 
-  // 3. 核心：加载设备列表 (带智能合并逻辑)
+  // 3. 全量同步：用于页面初始化（获取 RTSP URL 等全量数据）
   const fetchDevices = async (isSilent = false) => {
     if (!isSilent) loading.value = true
-    
     try {
       const res = await deviceApi.getDevices()
       if (res.code === 200) {
+        // 智能合并：保留本地的重连状态，不被服务器覆盖
         const serverList = res.data
-        
-        // 🔄 智能合并策略 (直接移植之前的逻辑)
-        // 这里的 deviceList 是全局的，所以无论哪个页面触发，状态都能保住
-        deviceList.value = serverList.map((serverItem: DeviceVO) => {
+        deviceList.value = serverList.map((serverItem: any) => {
           const localItem = deviceList.value.find(d => d.id === serverItem.id)
-          
-          if (!localItem) return { ...serverItem, isLoading: false }
-
-          // 保护重连状态
-          if (localItem.isRetrying) {
-            return {
-              ...serverItem,
-              status: localItem.status,
-              isRetrying: true,
-              failTip: ''
-            }
-          }
-          
-          // 保护错误提示
-          if (localItem.failTip) {
-            return {
-              ...serverItem,
-              status: 0,
-              failTip: localItem.failTip
-            }
-          }
-
-          // 保护图片加载状态 (防止 Monitor 页面闪烁)
           return {
             ...serverItem,
-            isLoading: localItem.isLoading || false
+            rtspUrl: serverItem.rtspUrl || serverItem.rtsp_url, // 字段兼容
+            // 保护本地 UI 状态
+            isRetrying: localItem?.isRetrying || false,
+            isVideoError: localItem?.isVideoError || false
           }
         })
       }
     } catch (e) {
-      console.error(e)
+      console.error('Fetch devices error:', e)
     } finally {
       if (!isSilent) loading.value = false
     }
   }
 
-  // 4. 重试连接逻辑
-  const retryConnection = async (id: number) => {
-    // 立即更新状态
-    updateDeviceState(id, { isRetrying: true, failTip: '' })
-    
+  // 4. 🚀 极简状态轮询：解决 500 错误和卡死问题
+  // 必须确保 deviceApi.getStatusOnly() 已经定义
+  const pollStatusOnly = async () => {
+    if (document.hidden) return // 标签页隐藏时不请求
+
     try {
-      // 这里的超时时间要长，因为后端要跑很久
-      const res = await deviceApi.getStreamStatus(id)
-
-      if (res.code === 200 && res.data.status === 1) {
-        setTimeout(() => {
-          updateDeviceState(id, { status: 1, isRetrying: false, failTip: '' })
-          streamVersion.value++ // 全局刷新版本号
-          fetchDevices(true)    // 同步列表
-          ElMessage.success('连接恢复')
-        }, 500)
-      } else {
-        const msg = res.msg || '无法连接设备'
-        updateDeviceState(id, { isRetrying: false, failTip: msg, status: 0 })
+      // 🚀 使用封装好的 api 避免 Token 缺失导致的 500
+      // 如果没有封装，请确保 axios 请求带上 Header
+      const res = await deviceApi.getStatusOnly() 
+      
+      if (res && res.code === 200) {
+        const remoteStatuses = res.data
+        deviceList.value.forEach(localDev => {
+          const remote = remoteStatuses.find((s: any) => s.id === localDev.id)
+          if (remote) {
+            // 只有非正在重连状态下，才更新在线状态
+            if (!localDev.isRetrying) {
+              localDev.status = remote.status
+            }
+            localDev.enabled = remote.enabled // 同步启停开关
+          }
+        })
       }
-    } catch (e: any) {
-      console.error('Retry error:', e)
-      let errorMsg = '网络请求失败'
-      if (e.message && (e.message.includes('timeout') || e.code === 'ECONNABORTED')) {
-        errorMsg = '请求响应超时'
-      }
-      updateDeviceState(id, { isRetrying: false, failTip: errorMsg, status: 0 })
+    } catch (e) {
+      console.error('Status polling error:', e)
     }
   }
 
-  // 5. 处理视频流自然断开
-  const handleVideoError = (id: number) => {
-    const target = deviceList.value.find(d => d.id === id)
-    if (target && target.status === 1) {
-      console.log(`视频流断开: ID ${id}`)
-      updateDeviceState(id, { status: 0, failTip: '视频流连接中断' })
+  // 5. 重试连接逻辑
+ // src/stores/device.ts
+
+const retryConnection = async (id: number) => {
+  updateDeviceState(id, { isRetrying: true, isVideoError: false });
+  try {
+    const res = await deviceApi.getStreamStatus(id);
+    if (res.code === 200) {
+      // 🚀 核心：成功后立即修改版本号，带上随机数彻底杀死缓存
+      streamVersion.value = Date.now(); 
+      updateDeviceState(id, { status: 1, isRetrying: false });
+      console.log("✅ 前端状态已更新，准备重载图像");
     }
+  } catch (e) {
+    updateDeviceState(id, { isRetrying: false });
   }
+}
 
   // 6. 启动轮询
   const startPolling = () => {
-    if (pollTimer) return // 防止重复启动
-    fetchDevices(false)   // 首次加载
-    pollTimer = setInterval(() => {
-      fetchDevices(true)  // 静默轮询
-    }, 3000)
+    if (pollTimer) return 
+    // 首次全量同步
+    fetchDevices(false)
+    // 开启 5 秒一次的状态同步
+    pollTimer = setInterval(pollStatusOnly, 5000)
   }
 
   // 7. 停止轮询
@@ -143,24 +129,13 @@ export const useDeviceStore = defineStore('device', () => {
     }
   }
 
-  // 8. ⭐ 新增：一键重连所有离线设备
+  // 8. 一键重连
   const reconnectAll = async () => {
-    // 1. 筛选出所有离线设备
-    const offlineDevices = deviceList.value.filter(d => d.status !== 1)
+    const offlineOnes = deviceList.value.filter(d => d.enabled && d.status === 0)
+    if (offlineOnes.length === 0) return ElMessage.info('没有需要重连的设备')
     
-    if (offlineDevices.length === 0) {
-      ElMessage.info('所有设备均已在线，无需重连')
-      return
-    }
-
-    ElMessage.success(`开始尝试重连 ${offlineDevices.length} 台设备...`)
-    
-    // 2. 并发执行重连
-    // 使用 Promise.all 可能导致后端压力过大，稍微限制一下并发比较好
-    // 但对于 10-20 台设备，直接并发没问题
-    offlineDevices.forEach(device => {
-      retryConnection(device.id)
-    })
+    ElMessage.success(`正在重连 ${offlineOnes.length} 台设备...`)
+    offlineOnes.forEach(d => retryConnection(d.id))
   }
 
   return {
@@ -170,10 +145,10 @@ export const useDeviceStore = defineStore('device', () => {
     getStreamUrl,
     fetchDevices,
     retryConnection,
-    handleVideoError,
     startPolling,
     stopPolling,
-    updateDeviceState ,// 导出这个以便 Monitor 更新 isLoading
-    reconnectAll
+    updateDeviceState,
+    reconnectAll,
+    pollStatusOnly
   }
 })

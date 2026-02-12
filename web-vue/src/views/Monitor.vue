@@ -106,47 +106,61 @@
       
       <section class="center-monitor">
         <div v-if="currentDevice" class="monitor-player-box" 
-             :class="{ 'offline': currentDevice.isVideoError, 'is-alarm': alarmState[currentDevice.id] }">
+             :class="{ 'offline': currentDevice.status !== 1 || !currentDevice.enabled || currentDevice.isVideoError, 'is-alarm': alarmState[currentDevice.id] }">
           
           <div class="player-header">
             <div class="header-left">
-              <span v-if="!currentDevice.isVideoError" class="live-badge">LIVE</span>
+              <span v-if="currentDevice.enabled && !currentDevice.isVideoError && currentDevice.status === 1" class="live-badge">LIVE</span>
               <span v-else class="offline-badge">OFFLINE</span>
               <span class="device-title">{{ currentDevice.name }}</span>
               <span class="device-id">#{{ currentDevice.id }}</span>
             </div>
-            <div class="header-status" :class="!currentDevice.isVideoError ? 'online' : 'offline'">
+            <div class="header-status" :class="currentDevice.enabled && currentDevice.status === 1 && !currentDevice.isVideoError ? 'online' : 'offline'">
               <span class="status-dot"></span>
-              {{ !currentDevice.isVideoError ? '信号正常' : '信号丢失' }}
+              {{ currentDevice.enabled && currentDevice.status === 1 && !currentDevice.isVideoError ? '信号正常' : '信号丢失' }}
             </div>
           </div>
 
           <div class="player-content">
-            <img 
-              :src="getStreamUrl(currentDevice.id)" 
-              class="main-stream" 
-              v-show="!currentDevice.isVideoError"
-              @error="handleVideoError(currentDevice.id)" 
-              @load="handleVideoLoaded(currentDevice.id)"
-            >
-            
-            <div v-if="currentDevice.isVideoError" class="player-overlay">
-              <el-icon :size="64" :class="{ 'spin-icon': currentDevice.isRetrying, 'error-icon': !currentDevice.isRetrying }">
-                <component :is="currentDevice.isRetrying ? Loading : CircleCloseFilled" />
-              </el-icon>
-              <div style="margin-top:20px" :class="{ 'error-text': !currentDevice.isRetrying }">
-                {{ currentDevice.isRetrying ? '正在重连 AI 引擎...' : '监控信号中断 (Python 404)' }}
+            <template v-if="currentDevice.enabled">
+              <img 
+                v-if="currentDevice.status === 1 || currentDevice.isRetrying"
+                :src="getStreamUrl(currentDevice.id)" 
+                class="main-stream"
+                v-show="!currentDevice.isVideoError"
+                @error="handleVideoError(currentDevice.id)" 
+                @load="handleVideoLoaded(currentDevice.id)"
+              >
+              
+              <div v-else class="player-overlay">
+                <el-icon :size="64" :class="{ 'spin-icon': currentDevice.isRetrying }">
+                  <component :is="currentDevice.isRetrying ? Loading : Monitor" />
+                </el-icon>
+                <div style="margin-top:20px">
+                  {{ currentDevice.isRetrying ? '正在唤醒摄像头...' : '设备当前处于休眠状态' }}
+                </div>
+                <el-button 
+                  v-if="!currentDevice.isRetrying" 
+                  type="primary" 
+                  size="small" 
+                  style="margin-top:15px" 
+                  @click="retryConnection"
+                >
+                  立即唤醒
+                </el-button>
               </div>
-              <el-button v-if="!currentDevice.isRetrying" type="primary" size="small" style="margin-top:15px" @click="retryConnection">重试连接</el-button>
-            </div>
+            </template>
             
+            <div v-else class="player-overlay">
+              <el-icon :size="64"><VideoCameraFilled /></el-icon>
+              <div style="margin-top:20px">该监控区域已禁用</div>
+            </div>
+
             <div v-if="alarmState[currentDevice.id]" class="alarm-overlay">
               <el-icon class="nav-alarm-icon"><Warning /></el-icon>
               <span>警告：检测到违规吸烟行为！</span>
             </div>
-          </div>
-
-          <div class="player-controls">
+          </div> <div class="player-controls">
             <div class="control-info">URL: {{ currentDevice.rtspUrl }}</div>
             <div class="control-group right">
               <el-button type="primary" :icon="FullScreen" @click="viewFullScreen(currentDevice.id)" circle plain></el-button>
@@ -169,14 +183,14 @@
                  class="device-nav-item" 
                  :class="{ 
                     'active': currentDevice?.id === device.id, 
-                    'offline': device.status !== 1,
+                    'offline': device.status !== 1 || !device.enabled,
                     'is-alarm': alarmState[device.id]
                  }" 
                  @click="switchDevice(device)">
               <div class="nav-status-indicator"></div>
               <div class="nav-content">
                 <div class="nav-name">{{ device.name }}</div>
-                <div class="nav-sub">ID: {{ device.id }}</div>
+                <div class="nav-sub">状态: {{ device.enabled ? (device.status === 1 ? '在线' : '离线') : '已停用' }}</div>
               </div>
               <el-icon v-if="alarmState[device.id]" class="blink-icon" color="#f56c6c"><Warning /></el-icon>
               <div class="nav-arrow"><el-icon><ArrowRight /></el-icon></div>
@@ -244,7 +258,8 @@ const fetchSystemStatus = async () => {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     })
     if (res.data.code === 200) {
-      systemStatus.totalStreams = res.data.data.business?.devices?.filter((d:any) => d.status === 1).length || 0
+      // 🚀 这里的 totalStreams 改为根据前端列表的 enabled 且 status 为 1 过滤
+      systemStatus.totalStreams = deviceList.value.filter(d => d.enabled && d.status === 1).length
       systemStatus.globalAi = res.data.data.business?.globalAi || false
     }
   } catch (e) {}
@@ -256,17 +271,17 @@ const currentDevice = ref<any>(null)
 const currentTime = ref(''), currentDate = ref('')
 const router = useRouter()
 
-const getStreamUrl = (id: number) => `${AI_API}/api/v1/monitor/stream/${id}?t=${deviceStore.streamVersion}`
+// 🚀 增加版本号后缀，防止浏览器缓存 403 页面
+const getStreamUrl = (id: number) => `${AI_API}/api/v1/monitor/stream/${id}?v=${deviceStore.streamVersion}`
 
 const currentUser = JSON.parse(localStorage.getItem('userInfo') || '{}')
 const isAdmin = computed(() => currentUser.role === 'admin')
 const username = computed(() => currentUser.username || 'Admin')
-const onlineCount = computed(() => deviceList.value.filter(d => d.status === 1).length)
-const offlineCount = computed(() => deviceList.value.filter(d => d.status !== 1).length)
+const onlineCount = computed(() => deviceList.value.filter(d => d.enabled && d.status === 1).length)
+const offlineCount = computed(() => deviceList.value.filter(d => !d.enabled || d.status !== 1).length)
 const isGlobalRetrying = computed(() => deviceList.value.some(d => d.isRetrying))
 
 const switchDevice = (device: any) => {
-  // 🚀 切换时重置该设备的错误状态，防止白屏
   deviceStore.updateDeviceState(device.id, { isVideoError: false, isLoading: true })
   currentDevice.value = device
 }
@@ -283,18 +298,18 @@ const retryConnection = () => {
     deviceStore.retryConnection(currentDevice.value.id)
   }
 }
-const refreshDevices = () => deviceStore.fetchDevices(false)
+
+// 🚀 刷新设备改为直接获取全量
+const refreshDevices = () => deviceStore.fetchDevices()
 const handleReconnectAll = () => deviceStore.reconnectAll()
 
-// 🚀 视频加载失败处理器
 const handleVideoError = (id: number) => {
     deviceStore.updateDeviceState(id, { 
-        isVideoError: true,   // 触发遮罩
+        isVideoError: true, 
         isLoading: false 
     })
 }
 
-// 🚀 视频加载成功处理器
 const handleVideoLoaded = (id: number) => {
     deviceStore.updateDeviceState(id, { 
         isVideoError: false, 
@@ -318,9 +333,14 @@ onMounted(() => {
     currentDate.value = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
   }
   updateTime(); setInterval(updateTime, 1000)
-  deviceStore.startPolling()
+  
+  // 🚀 初始化全量数据，后续 startPolling 会改为 status-only 极简轮询
+  deviceStore.fetchDevices().then(() => {
+     deviceStore.startPolling()
+  })
+  
   initWebSocket()
-  fetchSystemStatus(); setInterval(fetchSystemStatus, 10000)
+  fetchSystemStatus(); setInterval(fetchSystemStatus, 30000) // 拉长系统状态检查频率
 })
 
 onUnmounted(() => {
@@ -329,303 +349,99 @@ onUnmounted(() => {
 })
 
 const viewFullScreen = (id: number) => {
-  ElMessage.info("正在进入全屏模式...")
-  // 全屏逻辑可根据需要补充
+  const elem = document.querySelector('.main-stream')
+  if (elem && elem.requestFullscreen) {
+    elem.requestFullscreen()
+  } else {
+    ElMessage.info("当前浏览器不支持全屏功能")
+  }
 }
 </script>
 
 <style scoped>
-
-/* 原有样式保持不变 */
-
+/* 保持原有样式代码不变... */
 .monitor-screen { height: 100vh; background: linear-gradient(135deg, #0a0e17 0%, #1a1f2e 50%, #0d1119 100%); color: #e4e7ed; display: flex; flex-direction: column; overflow: hidden; }
-
-
-
-/* 顶部栏 */
-
 .top-bar { display: flex; justify-content: space-between; align-items: center; padding: 0 30px; height: 70px; background: rgba(22, 33, 52, 0.95); border-bottom: 1px solid rgba(64, 158, 255, 0.2); flex-shrink: 0; }
-
 .logo-section { display: flex; align-items: center; gap: 12px; }
-
 .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, #409eff 0%, #67c23a 100%); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; box-shadow: 0 0 15px rgba(64, 158, 255, 0.4); }
-
 .system-title { font-size: 20px; font-weight: 600; background: linear-gradient(90deg, #409eff, #67c23a); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 1px; }
-
-
-
 .status-section { display: flex; gap: 40px; }
-
 .status-item { display: flex; flex-direction: column; align-items: center; }
-
 .status-label { font-size: 12px; color: #909399; }
-
 .status-value { font-size: 24px; font-weight: 700; font-family: 'Courier New', monospace; }
-
 .status-value.online { color: #67c23a; }
-
 .status-value.offline { color: #f56c6c; }
-
-
-
 .right-controls { display: flex; align-items: center; gap: 20px; }
-
 .time-section { text-align: right; }
-
 .current-time { font-size: 20px; font-weight: 600; color: #409eff; }
-
 .current-date { font-size: 12px; color: #909399; }
-
 .user-actions { display: flex; gap: 10px; }
-
 .action-btn { display: flex; align-items: center; gap: 5px; }
-
-
-
-/* 主内容区 */
-
 .main-content { display: flex; padding: 20px; gap: 20px; flex: 1; min-height: 0; }
-
 .side-panel { width: 260px; display: flex; flex-direction: column; gap: 15px; flex-shrink: 0; }
-
 .left-panel { width: 240px; }
-
-
-
 .panel-section { background: rgba(22, 33, 52, 0.6); border: 1px solid rgba(64, 158, 255, 0.1); border-radius: 8px; padding: 15px; backdrop-filter: blur(10px); }
-
 .panel-section.full-height { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-
-
-/* 动画和错误样式 */
-
 .spin-icon { animation: spin 1s linear infinite; color: #409eff; }
-
 .error-icon { color: #f56c6c; animation: shake 0.4s ease-in-out; }
-
 .error-text { color: #f56c6c !important; font-weight: bold; }
-
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
 @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
-
-
-
 .section-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #409eff; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(64, 158, 255, 0.1); }
-
 .title-dot { width: 6px; height: 6px; background: #409eff; border-radius: 50%; }
-
-
-
 .status-list { display: flex; flex-direction: column; gap: 10px; }
-
 .status-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; }
-
 .status-row .status-icon { color: #67c23a; }
-
 .status-tag { margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: rgba(103, 194, 58, 0.2); color: #67c23a; }
-
 .status-tag.offline { background: rgba(245, 108, 108, 0.2); color: #f56c6c; }
-
 .status-tag.online { background: rgba(103, 194, 58, 0.2); color: #67c23a; }
-
-
-
 .action-buttons { display: flex; flex-direction: column; gap: 10px; }
-
 .action-buttons .el-button { width: 100%; margin: 0; justify-content: center; }
-
-
-
-/* 用户信息卡片 */
-
 .user-info-card { display: flex; align-items: center; gap: 15px; margin-top: auto; }
-
 .user-avatar { width: 40px; height: 40px; background: #409eff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; }
-
 .user-details { display: flex; flex-direction: column; }
-
 .user-name { font-weight: bold; }
-
 .user-role { font-size: 12px; color: #909399; }
-
-
-
-/* 中间大屏 */
-
 .center-monitor { flex: 1; background: rgba(0,0,0,0.2); border-radius: 12px; overflow: hidden; position: relative; display: flex; flex-direction: column; }
-
 .monitor-player-box { width: 100%; height: 100%; display: flex; flex-direction: column; background: rgba(22, 33, 52, 0.8); border: 1px solid rgba(64, 158, 255, 0.3); border-radius: 12px; overflow: hidden; transition: all 0.3s; }
-
 .monitor-player-box.offline { border-color: #f56c6c; background: rgba(40, 10, 10, 0.8); }
-
-
-
-/* 🔥 红框报警特效 */
-
-.monitor-player-box.is-alarm {
-
-  border-color: #F56C6C;
-
-  box-shadow: 0 0 30px rgba(245, 108, 108, 0.6) inset;
-
-  animation: flashBorder 0.8s infinite alternate;
-
-}
-
-@keyframes flashBorder {
-
-  from { border-color: #F56C6C; box-shadow: 0 0 10px #F56C6C; }
-
-  to { border-color: transparent; box-shadow: none; }
-
-}
-
-
-
+.monitor-player-box.is-alarm { border-color: #F56C6C; box-shadow: 0 0 30px rgba(245, 108, 108, 0.6) inset; animation: flashBorder 0.8s infinite alternate; }
+@keyframes flashBorder { from { border-color: #F56C6C; box-shadow: 0 0 10px #F56C6C; } to { border-color: transparent; box-shadow: none; } }
 .player-header { height: 50px; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; background: linear-gradient(90deg, rgba(64,158,255,0.1) 0%, transparent 100%); }
-
 .header-left { display: flex; align-items: center; gap: 12px; }
-
 .live-badge { background: #f56c6c; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; animation: blink 2s infinite; }
-
 .offline-badge { background: #909399; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-
-
-
 .device-title { font-size: 18px; font-weight: 600; }
-
 .device-id { color: #909399; font-family: monospace; }
-
 .header-status { display: flex; align-items: center; gap: 6px; font-size: 14px; }
-
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #67c23a; box-shadow: 0 0 8px #67c23a; }
-
 .header-status.offline { color: #f56c6c; }
-
 .header-status.offline .status-dot { background: #f56c6c; box-shadow: none; }
-
-
-
 .player-content { flex: 1; background: #000; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-
 .main-stream { width: 100%; height: 100%; object-fit: contain; }
-
 .player-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #909399; z-index: 10; }
-
-
-
-/* 🔥 报警文字遮罩 */
-
-.alarm-overlay {
-
-  position: absolute;
-
-  top: 20px;
-
-  left: 50%;
-
-  transform: translateX(-50%);
-
-  background: rgba(245, 108, 108, 0.9);
-
-  color: white;
-
-  padding: 8px 20px;
-
-  border-radius: 20px;
-
-  display: flex;
-
-  align-items: center;
-
-  gap: 10px;
-
-  font-weight: bold;
-
-  font-size: 16px;
-
-  z-index: 100;
-
-  animation: blink 0.5s infinite;
-
-}
-
-
-
+.alarm-overlay { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(245, 108, 108, 0.9); color: white; padding: 8px 20px; border-radius: 20px; display: flex; align-items: center; gap: 10px; font-weight: bold; font-size: 16px; z-index: 100; animation: blink 0.5s infinite; }
 .player-controls { height: 60px; background: rgba(10, 14, 23, 0.9); border-top: 1px solid rgba(64,158,255,0.2); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; z-index: 20; }
-
 .control-info { color: #606266; font-size: 12px; font-family: monospace; }
-
 .control-group.right { display: flex; gap: 15px; align-items: center; }
-
-
-
-/* 右侧列表 */
-
 .device-list-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 5px; }
-
 .device-list-scroll::-webkit-scrollbar { width: 4px; }
-
 .device-list-scroll::-webkit-scrollbar-thumb { background: rgba(64,158,255,0.3); border-radius: 2px; }
-
-
-
 .device-nav-item { display: flex; align-items: center; padding: 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; cursor: pointer; transition: all 0.2s; }
-
 .device-nav-item:hover { background: rgba(64,158,255,0.1); }
-
 .device-nav-item.active { background: linear-gradient(90deg, rgba(64,158,255,0.2) 0%, transparent 100%); border-color: rgba(64,158,255,0.5); box-shadow: inset 2px 0 0 #409eff; }
-
 .nav-status-indicator { width: 8px; height: 8px; border-radius: 50%; background: #67c23a; margin-right: 12px; }
-
 .device-nav-item.offline .nav-status-indicator { background: #f56c6c; }
-
 .nav-content { flex: 1; }
-
 .nav-name { font-size: 14px; font-weight: 500; }
-
 .nav-sub { font-size: 12px; color: #909399; }
-
 .nav-arrow { opacity: 0; transform: translateX(-5px); transition: all 0.2s; }
-
 .device-nav-item.active .nav-arrow { opacity: 1; transform: translateX(0); }
-
-
-
-/* 🔥 列表项报警闪烁 */
-
-.device-nav-item.is-alarm {
-
-  border: 1px solid #f56c6c;
-
-  background: rgba(245, 108, 108, 0.1);
-
-  animation: blink 1s infinite;
-
-}
-
+.device-nav-item.is-alarm { border: 1px solid #f56c6c; background: rgba(245, 108, 108, 0.1); animation: blink 1s infinite; }
 .nav-alarm-icon { margin-right: 10px; animation: shake 0.5s infinite; }
-
-
-
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #606266; gap: 20px; }
-
 .bottom-bar { padding: 10px; background: #0d1119; border-top: 1px solid rgba(64,158,255,0.1); text-align: center; font-size: 12px; color: #606266; flex-shrink: 0; }
-
-
-
 @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-
 .loading-spinner.large { width: 50px; height: 50px; border: 4px solid #409eff; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px; }
-
-.fullscreen-video-stream { width: 100%; height: 100%; object-fit: contain; }
-
-.fullscreen-offline { display: flex; justify-content: center; align-items: center; height: 100%; font-size: 30px; color: #f56c6c; }
-
-
-
 @media (max-width: 1200px) { .left-panel { display: none; } }
-
 </style>

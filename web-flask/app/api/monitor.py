@@ -1,61 +1,80 @@
-# web-flask/app/api/monitor.py
-
 from flask import Blueprint, Response, request, jsonify
 import requests
 import time
 import cv2
 import builtins
+import logging
+import threading
 
+logger = logging.getLogger(__name__)
 monitor_bp = Blueprint('monitor', __name__)
+device_config_cache = {}
 
 def get_sm():
-    # 强制从全局内置空间获取单例
     return getattr(builtins, 'GLOBAL_STREAM_MANAGER', None)
 
 def local_frame_generator(device_id):
     sm = get_sm()
-    print(f"📺 [Thread] 开始为 {device_id} 推流...")
     while True:
-        frame = sm.get_latest_frame(device_id) if sm else None
+        loader = sm.stream_loaders.get(device_id) if sm else None
+        if not loader or not loader.running: break
+        frame = loader.get_latest_frame()
         if frame is not None:
             ret, buffer = cv2.imencode('.jpg', frame)
             if ret:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        else:
-            time.sleep(0.1)
+        else: time.sleep(0.1)
         time.sleep(0.04)
+
+@monitor_bp.route('/sync', methods=['POST'])
+def sync_devices():
+    sm = get_sm()
+    global device_config_cache
+    if not sm: return jsonify({"code": 500}), 500
+    try:
+        resp = requests.get("http://localhost:8080/api/monitor/devices", timeout=5)
+        if resp.status_code == 200:
+            devices, active_devices = resp.json().get('data', []), {}
+            for dev in devices:
+                d_id = int(dev['id'])
+                is_enabled = dev.get('enabled') in [True, 1, "true", "True"]
+                url = dev.get('rtspUrl') or dev.get('rtsp_url')
+                device_config_cache[d_id] = {"enabled": is_enabled, "url": url}
+                if is_enabled: active_devices[d_id] = url
+                elif d_id in sm.stream_loaders: sm.stream_loaders[d_id].stop()
+            sm.update_active_streams(active_devices)
+            return jsonify({"code": 200})
+    except: return jsonify({"code": 500}), 500
 
 @monitor_bp.route('/stream/<int:device_id>') 
 def video_feed(device_id):
     sm = get_sm()
-    
-    # 1. 核心补救：如果内存里没这个设备，当场启动它！
-    if sm and device_id not in sm.stream_loaders:
-        print(f"🛠️ [Monitor] 内存为空，正在为 ID:{device_id} 执行紧急现场启动...")
-        java_url = "http://localhost:8080/api/monitor/devices"
-        try:
-            resp = requests.get(java_url, timeout=3)
-            if resp.status_code == 200:
-                devices = resp.json().get('data', [])
-                for dev in devices:
-                    if dev['id'] == device_id:
-                        url = dev.get('rtspUrl') or dev.get('rtsp_url')
-                        if url:
-                            print(f"🚀 [Monitor] 成功获取地址: {url}，正在拉起线程...")
-                            sm.add_camera(device_id, url)
-                            # 给线程一点点启动时间
-                            time.sleep(1.5) 
-                        break
-        except Exception as e:
-            print(f"❌ [Monitor] 现场启动失败: {e}")
+    config = device_config_cache.get(device_id)
+    if not config or not config.get('enabled'):
+        sync_devices()
+        config = device_config_cache.get(device_id)
 
-    # 2. 检查启动结果
-    loader = sm.stream_loaders.get(device_id) if sm else None
+    if not config or not config.get('enabled'): return "Disabled", 403
+
+    loader = sm.stream_loaders.get(device_id)
+    # 🚀 判定逻辑：如果没在跑，或者还没有拿到像素帧
+    if not loader or not loader.running or loader.latest_frame is None:
+        logger.info(f"🔥 [点火确认] ID:{device_id}")
+        # 🚀 必须异步拉起，防止阻塞 Flask 响应
+        threading.Thread(target=sm.add_camera, args=(device_id, config['url']), daemon=True).start()
+        
+        # 🚀 自旋等待：最多等 5 秒，直到后台线程成功 read() 到像素
+        start_wait = time.time()
+        while time.time() - start_wait < 5.0:
+            loader = sm.stream_loaders.get(device_id)
+            if loader and loader.latest_frame is not None:
+                logger.info(f"✨ [就绪] ID:{device_id} 耗时 {round(time.time()-start_wait, 2)}s")
+                break
+            time.sleep(0.3)
+
+    loader = sm.stream_loaders.get(device_id)
+    if loader and loader.latest_frame is not None:
+        return Response(local_frame_generator(device_id), mimetype='multipart/x-mixed-replace; boundary=frame')
     
-    if loader and loader.running:
-        print(f"✅ [Monitor] 设备 {device_id} 准备就绪，开始输出流")
-        return Response(local_frame_generator(device_id), 
-                        mimetype='multipart/x-mixed-replace; boundary=frame')
-    
-    return f"Device {device_id} Not Found or Offline", 404
+    return "Stream Pending", 404

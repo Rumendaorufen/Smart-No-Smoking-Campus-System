@@ -2,6 +2,14 @@ import request from '../utils/request'
 import type { ApiResponse } from './auth' 
 
 export default {
+
+  // 🚀 必须要添加这个新定义的接口！
+  getStatusOnly() {
+    return request({
+      url: '/api/monitor/devices/status-only',
+      method: 'get'
+    })
+  },
   // 获取设备列表
   getDevices: () => {
     return request<any, ApiResponse<any[]>>({
