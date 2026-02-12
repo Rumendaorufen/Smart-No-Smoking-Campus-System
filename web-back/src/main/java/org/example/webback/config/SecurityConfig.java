@@ -7,41 +7,54 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.Collections;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
-    // 1. 注入加密工具 Bean，供 Service 使用
     @Bean
     public BCryptPasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
-    // 2. 配置过滤链
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                // 关闭 CSRF (因为我们使用 JWT，不需要 CSRF)
                 .csrf(csrf -> csrf.disable())
-                // 关闭 Session (JWT 是无状态的)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                // 允许跨域 (配合 WebMvcConfig)
-                .cors(cors -> cors.configure(http))
-                // 拦截规则
+                // 🚀 显式配置跨域，防止 OPTIONS 请求被拦截
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
-                        // ✅ 放行登录接口、静态资源、WebSocket、视频流等
-                        .requestMatchers(
-                                "/api/auth/login",
-                                "/static/**",
-                                "/ws/**",
-                                "/error"
-                        ).permitAll()
-                        // 🚀 其他接口也不要让 SpringSecurity 拦截，
-                        // 我们使用自定义的 JwtInterceptor 来拦截 (更灵活)
+                        // ✅ 1. 放行登录
+                        .requestMatchers("/api/auth/login").permitAll()
+                        // ✅ 2. 放行系统监控相关 (解决 Monitor.vue 的 401)
+                        .requestMatchers("/api/system/status", "/api/system/**").permitAll()
+                        // ✅ 3. 放行设备管理接口 (解决 Python 拉取列表的 401 和 Vue 404)
+                        .requestMatchers("/api/monitor/devices", "/api/monitor/**").permitAll()
+                        // ✅ 4. 放行内部上报、WS、静态资源
+                        .requestMatchers("/api/internal/**", "/ws/**", "/static/**", "/error").permitAll()
+                        // 🚀 5. 其余请求也放行，交给 JwtInterceptor 处理业务权限
                         .anyRequest().permitAll()
                 );
 
         return http.build();
+    }
+
+    // 🚀 辅助：Cors 配置源
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOriginPatterns(Collections.singletonList("*"));
+        config.setAllowedMethods(Collections.singletonList("*"));
+        config.setAllowedHeaders(Collections.singletonList("*"));
+        config.setAllowCredentials(true);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
     }
 }

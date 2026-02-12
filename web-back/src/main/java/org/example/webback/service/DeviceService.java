@@ -93,4 +93,20 @@ public class DeviceService extends ServiceImpl<DeviceMapper, Device> {
             return false;
         }
     }
+
+    /**
+     * 接收外部（Python）通知，直接更新设备在线状态
+     * 这种方式比 Socket 探测更准确，因为 Python 是真正连接流的一方
+     */
+    public void syncDeviceStatus(Integer id, Integer status) {
+        Device device = this.getById(id);
+        if (device == null) return;
+
+        // 如果状态没变，就不更新数据库，节省性能
+        if (device.getStatus().equals(status)) return;
+
+        device.setStatus(status);
+        device.setUpdatedAt(LocalDateTime.now());
+        this.updateById(device);
+    }
 }

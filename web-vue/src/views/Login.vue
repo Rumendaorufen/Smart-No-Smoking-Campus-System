@@ -100,32 +100,22 @@ const handleLogin = async () => {
     if (valid) {
       loading.value = true
       try {
-        // 调用我们封装好的 API
-        // 注意：因为我们在 request.ts 里拦截了响应，这里拿到的 res 已经是 { code, msg, data } 结构
         const res: any = await authApi.login(loginForm)
         
+        // Java 返回结构: { code: 200, data: { token: "...", userInfo: {...} } }
         if (res.code === 200) {
-          ElMessage.success({
-            message: '登录成功，正在进入系统...',
-            duration: 1500
-          })
+          ElMessage.success('登录成功')
           
-          // 1. 存储 Token (这是最关键的)
+          // 存 Token
           localStorage.setItem('token', res.data.token)
-          
-          // 2. 存储用户信息 (用于右上角显示名字等)
+          // 存用户信息
           localStorage.setItem('userInfo', JSON.stringify(res.data.userInfo))
           
-          // 3. 稍微延迟跳转，让用户看清成功提示
           setTimeout(() => {
             router.push('/')
           }, 500)
-        } else {
-          // 处理业务错误 (如密码错误、账号禁用)
-          ElMessage.error(res.msg || '登录失败')
         }
       } catch (error) {
-        // 网络错误等已在 request.ts 拦截器处理，这里只需关闭 loading
         console.error('Login error:', error)
       } finally {
         loading.value = false

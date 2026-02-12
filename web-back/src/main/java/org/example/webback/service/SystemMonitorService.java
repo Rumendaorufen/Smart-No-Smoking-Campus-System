@@ -1,7 +1,6 @@
 package org.example.webback.service;
 
 import cn.hutool.core.util.NumberUtil;
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -14,119 +13,82 @@ import oshi.software.os.FileSystem;
 import oshi.software.os.OSFileStore;
 import oshi.software.os.OperatingSystem;
 
-import java.io.File;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
-@EnableScheduling // 开启定时任务
+@EnableScheduling
 public class SystemMonitorService {
 
     private final SystemInfo systemInfo = new SystemInfo();
     private final HardwareAbstractionLayer hardware = systemInfo.getHardware();
     private final OperatingSystem os = systemInfo.getOperatingSystem();
 
-    // 缓存最新的系统状态 (线程安全)
+    // 核心：缓存系统状态
     private final Map<String, Object> systemCache = new ConcurrentHashMap<>();
-
-    // 保留上一次的 CPU 滴答数，用于计算差值
     private long[] prevTicks = new long[CentralProcessor.TickType.values().length];
 
-    /**
-     * 初始化
-     */
+    // 🚀 关键：同步 AI 引擎状态（默认为开启）
+    private boolean globalAiEnabled = true;
+
     public SystemMonitorService() {
-        // 初始化 CPU 滴答数
         prevTicks = hardware.getProcessor().getSystemCpuLoadTicks();
-        // 初始化缓存结构
         systemCache.put("cpu", 0.0);
-        systemCache.put("memory", new HashMap<>());
-        systemCache.put("gpu", new HashMap<>());
-        systemCache.put("disk", new HashMap<>());
+        systemCache.put("global_ai", true);
     }
 
-    /**
-     * 🚀 核心任务：每秒执行一次 (fixedRate = 1000ms)
-     * 对应 Python 代码中的 monitor_task while True 循环
-     */
+    // 🚀 供 Controller 调用，更新同步状态
+    public void updateGlobalAiStatus(boolean enabled) {
+        this.globalAiEnabled = enabled;
+        systemCache.put("global_ai", enabled);
+    }
+
     @Scheduled(fixedRate = 1000)
     public void refreshSystemStatus() {
         try {
-            // 1. CPU 使用率
+            // 1. CPU
             CentralProcessor processor = hardware.getProcessor();
-            // 计算自上次更新以来的负载 (这种方式不会阻塞线程)
             double cpuLoad = processor.getSystemCpuLoadBetweenTicks(prevTicks) * 100;
-            prevTicks = processor.getSystemCpuLoadTicks(); // 更新滴答数
+            prevTicks = processor.getSystemCpuLoadTicks();
 
-            // 2. 内存使用
+            // 2. 内存 (RAM)
             GlobalMemory memory = hardware.getMemory();
             long totalMem = memory.getTotal();
-            long availableMem = memory.getAvailable();
-            long usedMem = totalMem - availableMem;
+            long usedMem = totalMem - memory.getAvailable();
 
-            Map<String, Object> memData = new HashMap<>();
-            memData.put("total", formatGb(totalMem));
-            memData.put("used", formatGb(usedMem));
-            memData.put("free", formatGb(availableMem));
-            memData.put("percent", NumberUtil.round((double) usedMem / totalMem * 100, 1).doubleValue());
+            // 3. 磁盘 (Disk)
+            OSFileStore store = os.getFileSystem().getFileStores().get(0);
+            long totalDisk = store.getTotalSpace();
+            long freeDisk = store.getUsableSpace();
 
-            // 3. 磁盘使用 (只获取项目所在的磁盘)
-            FileSystem fileSystem = os.getFileSystem();
-            List<OSFileStore> fileStores = fileSystem.getFileStores();
-            // 简单起见，我们取第一个主要磁盘，或者你可以遍历求和
-            OSFileStore store = fileStores.isEmpty() ? null : fileStores.get(0);
-
-            Map<String, Object> diskData = new HashMap<>();
-            if (store != null) {
-                long totalSpace = store.getTotalSpace();
-                long usableSpace = store.getUsableSpace();
-                long usedSpace = totalSpace - usableSpace;
-
-                diskData.put("total", formatGb(totalSpace));
-                diskData.put("used", formatGb(usedSpace));
-                diskData.put("free", formatGb(usableSpace));
-                diskData.put("percent", NumberUtil.round((double) usedSpace / totalSpace * 100, 1).doubleValue());
-            }
-
-            // 4. GPU 信息 (Java OSHI 获取 N卡 实时使用率比较难，这里做个静态展示)
-            // 如果必须获取实时 GPU，建议让 Python 通过 HTTP 传给 Java，或者 Java 调用 nvidia-smi 命令行
+            // 4. GPU (静态获取名称，实时负载需 Python 辅助)
             Map<String, Object> gpuData = new HashMap<>();
             var graphicsCards = hardware.getGraphicsCards();
             if (!graphicsCards.isEmpty()) {
-                var card = graphicsCards.get(0);
-                gpuData.put("name", card.getName());
-                gpuData.put("vram", formatGb(card.getVRam()));
-                gpuData.put("percent", 0); // OSHI 无法获取实时 GPU 负载
-            } else {
-                gpuData.put("name", "无独立显卡");
-                gpuData.put("percent", 0);
+                gpuData.put("name", graphicsCards.get(0).getName());
+                gpuData.put("memPercent", 0);
             }
 
-            // 更新缓存
+            // 更新缓存 (平铺结构，方便前端直接读取)
             systemCache.put("cpu", NumberUtil.round(cpuLoad, 1).doubleValue());
-            systemCache.put("memory", memData);
-            systemCache.put("disk", diskData);
-            systemCache.put("gpu", gpuData);
+            systemCache.put("ramPercent", NumberUtil.round((double) usedMem / totalMem * 100, 1).doubleValue());
+            systemCache.put("ramUsed", NumberUtil.round(usedMem / 1024.0 / 1024.0 / 1024.0, 2).doubleValue());
 
-            // log.info("系统状态已更新: CPU={}%, RAM={}%", cpuLoad, memData.get("percent"));
+            Map<String, Object> diskData = new HashMap<>();
+            diskData.put("percent", NumberUtil.round((double)(totalDisk - freeDisk)/totalDisk * 100, 1).doubleValue());
+            diskData.put("free", NumberUtil.round(freeDisk / 1024.0 / 1024.0 / 1024.0, 1).doubleValue());
+            systemCache.put("disk", diskData);
+
+            systemCache.put("gpu", gpuData);
+            systemCache.put("global_ai", globalAiEnabled); // 🚀 确保同步到前端
 
         } catch (Exception e) {
-            log.error("获取硬件信息失败", e);
+            log.error("监控数据采集异常", e);
         }
     }
 
-    /**
-     * 对外提供获取缓存的方法
-     */
     public Map<String, Object> getSystemStatus() {
         return systemCache;
-    }
-
-    // 辅助：转 GB
-    private double formatGb(long bytes) {
-        return NumberUtil.round(bytes / 1024.0 / 1024.0 / 1024.0, 2).doubleValue();
     }
 }

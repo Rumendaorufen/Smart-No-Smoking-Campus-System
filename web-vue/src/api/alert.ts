@@ -1,46 +1,38 @@
-// src/api/alert.ts
 import request from '../utils/request'
 
-// 定义报警记录的数据结构 (对应后端的 to_dict)
+// 定义报警记录的数据结构 (适配 Java 驼峰)
 export interface Alarm {
   id: number
-  device_id: number
-  device_name: string
+  deviceId: number     // ✅ 驼峰
+  deviceName: string   // ✅ 驼峰
   type: string
   confidence: number
-  video_url: string
-  roi_url: string // 特写图
-  status: number // 0:待审, 1:确认, 2:误报
-  status_text: string
-  created_at: string
-  auditor_name?: string
-  audit_time?: string
-  audit_remark?: string
-}
-
-export interface AlarmListResponse {
-  list: Alarm[]
-  total: number
-  pages: number
-  current_page: number
+  videoUrl: string     // ✅ 驼峰
+  roiUrl: string       // ✅ 驼峰
+  auditStatus: number  // ✅ 适配 Java: auditStatus
+  statusText: string   // ✅ 驼峰
+  createdAt: string    // ✅ 驼峰
+  auditorName?: string // ✅ 驼峰
+  auditTime?: string   // ✅ 驼峰
+  auditRemark?: string // ✅ 驼峰
 }
 
 // 1. 获取待审核列表
-export const getPendingAlerts = (params: { page: number; page_size: number }) => {
-  return request.get('/alerts/pending', { params })
+export const getPendingAlerts = (params: { page: number; pageSize: number }) => {
+  return request.get('/api/alerts/pending', { params }) // ✅ 补齐 /api
 }
 
 // 2. 提交审核结果
 export const submitAudit = (id: number, data: { status: number; remark?: string }) => {
-  return request.post(`/alerts/${id}/audit`, data)
+  return request.post(`/api/alerts/${id}/audit`, data) // ✅ 补齐 /api
 }
 
 // 3. 获取历史归档
 export const getArchive = (params: any) => {
-  return request.get('/alerts/archive', { params })
+  return request.get('/api/alerts/archive', { params }) // ✅ 补齐 /api
 }
 
 // 4. 删除记录
 export const deleteAlarm = (id: number) => {
-  return request.delete(`/alerts/${id}`)
+  return request.delete(`/api/alerts/${id}`) // ✅ 补齐 /api
 }

@@ -21,7 +21,6 @@ spring:
       database: 0
 
   # 3. MongoDB 配置 (可选，如果暂没装可以注释掉)
-  data:
     mongodb:
       uri: mongodb://localhost:27017/smart_campus_logs
 

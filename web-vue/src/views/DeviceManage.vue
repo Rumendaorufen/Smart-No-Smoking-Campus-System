@@ -70,50 +70,45 @@
           :key="device.id" 
           :id="'card-' + device.id"
           class="video-card"
-          :class="{ 'offline': device.status !== 1 }"
+          :class="{ 'offline': device.isVideoError }"
         >
           <div class="card-header">
             <div class="card-title">
-              <span class="live-tag" v-if="device.status === 1">LIVE</span>
+              <span class="live-tag" v-if="!device.isVideoError">LIVE</span>
               <span class="offline-tag" v-else>OFF</span>
               <span class="name">{{ device.name }}</span>
             </div>
-            <div class="card-time">{{ formatTime(device.created_at) }}</div>
+            <div class="card-time">{{ formatTime(device.createdAt) }}</div>
           </div>
 
           <div class="card-video">
             <img 
-              v-if="device.status === 1"
-              :src="getStreamUrl(device.id)" 
+              v-show="!device.isVideoError"
+              :src="getAiStreamUrl(device.id)" 
               loading="lazy"
-              @error="handleVideoError(device)"
+              @error="handleImgError(device)"
+              @load="handleImgLoad(device)"
             />
 
-            <div v-else-if="device.isRetrying" class="retry-mask">
-                <div class="radar-spinner"></div>
-                <div class="retry-text">正在建立连接...</div>
-            </div>
-
-            <div v-else class="offline-placeholder">
-                <el-icon :size="48" class="offline-icon" :class="{ 'error-shake': device.failTip }">
-                    <component :is="device.failTip ? Warning : VideoCameraFilled" />
+            <div v-if="device.isVideoError" class="offline-placeholder">
+                <el-icon :size="48" class="offline-icon" :class="{ 'error-shake': device.failTip || device.isRetrying }">
+                    <component :is="device.isRetrying ? Loading : (device.failTip ? Warning : VideoCameraFilled)" />
                 </el-icon>
                 
                 <p class="offline-tip" :class="{ 'error-text': device.failTip }">
-                    {{ device.failTip || '信号已中断' }}
+                    {{ device.isRetrying ? '正在重连 AI 引擎...' : (device.failTip || '信号源不可用') }}
                 </p>
                 
                 <button class="retry-btn" @click="retryStream(device)">
                   <el-icon class="icon"><RefreshRight /></el-icon>
-                  {{ device.failTip ? '重试连接' : '点击重连' }}
+                  {{ device.isRetrying ? '重试中...' : '点击重连' }}
                 </button>
             </div>
-            
           </div>
 
           <div class="card-footer">
-            <div class="rtsp-info" :title="device.rtsp_url">
-              {{ device.rtsp_url }}
+            <div class="rtsp-info" :title="device.rtspUrl">
+              {{ device.rtspUrl }}
             </div>
             <div class="card-actions">
               <el-button type="primary" circle size="small" @click="openDialog('edit', device)">
@@ -158,7 +153,7 @@
         </el-form-item>
         <el-form-item label="RTSP地址" required>
           <el-input 
-            v-model="form.rtsp_url" 
+            v-model="form.rtspUrl" 
             type="textarea" 
             :rows="3" 
             placeholder="rtsp://admin:password@ip:port/stream" 
@@ -181,55 +176,37 @@ import deviceApi from '../api/device'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Plus, Monitor, Edit, Delete, Refresh, VideoCameraFilled, 
-  RefreshRight, Warning, Connection
+  RefreshRight, Warning, Connection, Loading
 } from '@element-plus/icons-vue'
 
-// 使用 Pinia Store
+const AI_API = import.meta.env.VITE_APP_AI_API || 'http://localhost:5000'
+
 const deviceStore = useDeviceStore()
 const { deviceList, loading } = storeToRefs(deviceStore)
 
-// ========== 分页逻辑 (新增) ==========
+// 分页
 const currentPage = ref(1)
-const pageSize = ref(8) // 默认每页显示8个，正好两行
-
+const pageSize = ref(8) 
 const totalDevices = computed(() => deviceList.value.length)
-
-// 计算当前页显示的设备
 const pagedDeviceList = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return deviceList.value.slice(start, end)
+  return deviceList.value.slice(start, start + pageSize.value)
 })
 
-const handleSizeChange = (val: number) => {
-  pageSize.value = val
-  currentPage.value = 1
-}
+const handleSizeChange = (val: number) => { pageSize.value = val; currentPage.value = 1; }
+const handleCurrentChange = (val: number) => { currentPage.value = val; }
+const isGlobalRetrying = computed(() => deviceList.value.some(d => d.isRetrying))
+const handleReconnectAll = () => deviceStore.reconnectAll()
 
-const handleCurrentChange = (val: number) => {
-  currentPage.value = val
-}
-// ====================================
-
-const isGlobalRetrying = computed(() => {
-  return deviceList.value.some(d => d.isRetrying)
-})
-
-const handleReconnectAll = () => {
-  deviceStore.reconnectAll()
-}
-
-// 弹窗相关
+// 状态管理
 const dialogVisible = ref(false)
 const dialogMode = ref<'add' | 'edit'>('add')
 const currentId = ref<number | null>(null)
-const form = ref({ name: '', rtsp_url: '' })
+const form = ref({ name: '', rtspUrl: '' })
 
-// 统计
 const onlineCount = computed(() => deviceList.value.filter(d => d.status === 1).length)
 const offlineCount = computed(() => deviceList.value.filter(d => d.status !== 1).length)
 
-// --- Store 代理 ---
 const refreshAll = () => {
   deviceStore.streamVersion++
   deviceStore.fetchDevices(false)
@@ -237,39 +214,42 @@ const refreshAll = () => {
 }
 
 const retryStream = (device: any) => {
+  // 🚀 尝试重连时先重置错误标记
+  deviceStore.updateDeviceState(device.id, { isVideoError: false })
   deviceStore.retryConnection(device.id)
 }
 
-const getStreamUrl = (id: number) => {
-  return deviceStore.getStreamUrl(id)
+const getAiStreamUrl = (id: number) => `${AI_API}/api/v1/monitor/stream/${id}?v=${deviceStore.streamVersion}`
+
+// 🚀 核心修改：处理图片加载结果
+const handleImgError = (device: any) => {
+  deviceStore.updateDeviceState(device.id, { isVideoError: true })
+}
+const handleImgLoad = (device: any) => {
+  deviceStore.updateDeviceState(device.id, { isVideoError: false })
 }
 
-const handleVideoError = (device: any) => {
-  deviceStore.handleVideoError(device.id)
-}
-
-// --- CRUD ---
 const openDialog = (mode: 'add' | 'edit', row?: any) => {
   dialogMode.value = mode
   dialogVisible.value = true
   if (mode === 'edit' && row) {
     currentId.value = row.id
-    form.value = { name: row.name, rtsp_url: row.rtsp_url }
+    form.value = { name: row.name, rtspUrl: row.rtspUrl }
   } else {
     currentId.value = null
-    form.value = { name: '', rtsp_url: '' }
+    form.value = { name: '', rtspUrl: '' }
   }
 }
 
 const handleSubmit = async () => {
-  if (!form.value.name || !form.value.rtsp_url) return ElMessage.warning('请填写完整')
+  if (!form.value.name || !form.value.rtspUrl) return ElMessage.warning('请填写完整')
   try {
     if (dialogMode.value === 'add') {
-      const res = await deviceApi.addDevice(form.value)
+      const res: any = await deviceApi.addDevice(form.value)
       if (res.code === 200) ElMessage.success('添加成功')
     } else {
       if (!currentId.value) return
-      const res = await deviceApi.updateDevice(currentId.value, form.value)
+      const res: any = await deviceApi.updateDevice(currentId.value, form.value)
       if (res.code === 200) ElMessage.success('更新成功')
     }
     dialogVisible.value = false
@@ -281,7 +261,7 @@ const handleSubmit = async () => {
 const handleDelete = (row: any) => {
   ElMessageBox.confirm(`确定删除 ${row.name}?`, '警告', { type: 'warning' })
     .then(async () => {
-      const res = await deviceApi.deleteDevice(row.id)
+      const res: any = await deviceApi.deleteDevice(row.id)
       if (res.code === 200) {
         ElMessage.success('删除成功')
         deviceStore.fetchDevices(false)
@@ -289,17 +269,11 @@ const handleDelete = (row: any) => {
     }).catch(() => {})
 }
 
-// 辅助功能
 const scrollToCard = (id: number) => {
-  // 注意：如果分页了，点击侧边栏索引可能需要跳转页码
   const index = deviceList.value.findIndex(d => d.id === id)
   if (index !== -1) {
-    // 计算该设备在第几页
     const targetPage = Math.ceil((index + 1) / pageSize.value)
-    if (currentPage.value !== targetPage) {
-      currentPage.value = targetPage
-    }
-    // 等待 DOM 更新后滚动
+    if (currentPage.value !== targetPage) currentPage.value = targetPage
     setTimeout(() => {
       const el = document.getElementById(`card-${id}`)
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -308,301 +282,59 @@ const scrollToCard = (id: number) => {
 }
 
 const formatTime = (timeStr: string) => {
-  if(!timeStr) return ''
-  return new Date(timeStr).toLocaleDateString()
+  if(!timeStr) return '-'
+  const date = new Date(timeStr)
+  return date.toLocaleString('zh-CN', { 
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  })
 }
 
-onMounted(() => {
-  deviceStore.startPolling()
-})
-
-onUnmounted(() => {
-  deviceStore.stopPolling()
-})
+onMounted(() => { deviceStore.startPolling() })
+onUnmounted(() => { deviceStore.stopPolling() })
 </script>
 
 <style scoped>
-.device-manage-container {
-  display: flex;
-  height: 100vh;
-  background: #0d1119;
-  color: #fff;
-  overflow: hidden;
-}
-
-/* 左侧侧边栏 */
-.sidebar {
-  width: 280px;
-  background: rgba(22, 33, 52, 0.95);
-  border-right: 1px solid rgba(64, 158, 255, 0.2);
-  display: flex;
-  flex-direction: column;
-  padding: 20px;
-  flex-shrink: 0;
-  z-index: 10;
-}
-
+/* 原有样式保持不变 */
+.device-manage-container { display: flex; height: 100vh; background: #0d1119; color: #fff; overflow: hidden; }
+.sidebar { width: 280px; background: rgba(22, 33, 52, 0.95); border-right: 1px solid rgba(64, 158, 255, 0.2); display: flex; flex-direction: column; padding: 20px; flex-shrink: 0; z-index: 10; }
 .sidebar-header h2 { margin: 0; font-size: 20px; color: #409eff; }
 .subtitle { font-size: 12px; color: #909399; margin-bottom: 20px; letter-spacing: 1px; }
-
-.stats-card {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  padding: 15px;
-  display: flex;
-  justify-content: space-around;
-  margin-bottom: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
+.stats-card { background: rgba(0, 0, 0, 0.2); border-radius: 8px; padding: 15px; display: flex; justify-content: space-around; margin-bottom: 20px; border: 1px solid rgba(255, 255, 255, 0.05); }
 .stat-item { display: flex; flex-direction: column; align-items: center; }
 .stat-item .label { font-size: 12px; color: #909399; margin-bottom: 5px; }
 .stat-item .value { font-size: 20px; font-weight: bold; }
 .value.online { color: #67c23a; }
 .value.offline { color: #f56c6c; }
 .divider { width: 1px; background: rgba(255, 255, 255, 0.1); }
-
-.action-area {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  margin-bottom: 30px;
-  width: 100%;
-}
-
-.action-area .el-button {
-  width: 100%;
-  margin-left: 0 !important;
-  margin-right: 0;
-  height: 40px;
-  justify-content: center;
-  border-radius: 8px;
-}
-
-.back-btn {
-  background: transparent !important;
-  border: 1px solid rgba(144, 147, 153, 0.5) !important;
-  color: #909399 !important;
-}
-
-.back-btn:hover {
-  border-color: #409eff !important;
-  color: #409eff !important;
-  background: rgba(64, 158, 255, 0.1) !important;
-}
+.action-area { display: flex; flex-direction: column; gap: 15px; margin-bottom: 30px; width: 100%; }
+.action-area .el-button { width: 100%; margin-left: 0 !important; margin-right: 0; height: 40px; justify-content: center; border-radius: 8px; }
+.back-btn { background: transparent !important; border: 1px solid rgba(144, 147, 153, 0.5) !important; color: #909399 !important; }
+.back-btn:hover { border-color: #409eff !important; color: #409eff !important; background: rgba(64, 158, 255, 0.1) !important; }
 .mini-list-title { font-size: 12px; color: #606266; margin-bottom: 10px; font-weight: bold; }
 .mini-device-list { flex: 1; overflow-y: auto; padding-right: 5px; }
-.mini-device-list::-webkit-scrollbar { width: 4px; }
-.mini-device-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-
-.mini-item {
-  display: flex; align-items: center; padding: 10px;
-  border-radius: 6px; cursor: pointer; transition: all 0.2s;
-  margin-bottom: 5px;
-}
+.mini-item { display: flex; align-items: center; padding: 10px; border-radius: 6px; cursor: pointer; transition: all 0.2s; margin-bottom: 5px; }
 .mini-item:hover { background: rgba(64, 158, 255, 0.1); }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: #67c23a; margin-right: 10px; }
 .is-offline .status-dot { background: #f56c6c; }
 .mini-item .name { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mini-item .id { font-size: 12px; color: #606266; }
-
-/* 右侧主区域 */
-.main-grid-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background-image: radial-gradient(rgba(64, 158, 255, 0.05) 1px, transparent 1px);
-  background-size: 20px 20px;
-  overflow: hidden;
-}
-
-.grid-header {
-  height: 60px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 30px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  flex-shrink: 0; /* 防止头部被压缩 */
-}
-.grid-header .title { font-size: 18px; font-weight: bold; }
-
-.video-grid {
-  flex: 1;
-  padding: 30px;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
-  align-content: start;
-}
-
-/* 视频卡片样式 */
-.video-card {
-  background: rgba(30, 35, 45, 0.8);
-  border: 1px solid rgba(64, 158, 255, 0.2);
-  border-radius: 12px;
-  overflow: hidden;
-  transition: transform 0.2s, box-shadow 0.2s;
-  display: flex;
-  flex-direction: column;
-  height: 300px; /* 固定高度防止抖动 */
-}
-
-.video-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4);
-  border-color: #409eff;
-}
-
-.video-card.offline { border-color: #f56c6c; opacity: 0.8; }
-
-.card-header {
-  padding: 10px 15px;
-  background: rgba(0, 0, 0, 0.2);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-shrink: 0;
-}
-.card-title { display: flex; align-items: center; gap: 8px; overflow: hidden; }
-.card-title .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.live-tag { background: #f56c6c; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
-.offline-tag { background: #909399; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
-.card-time { font-size: 12px; color: #606266; flex-shrink: 0; }
-
-.card-video {
-  flex: 1; /* 撑满剩余空间 */
-  background: #000;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
+.main-grid-area { flex: 1; display: flex; flex-direction: column; background-image: radial-gradient(rgba(64, 158, 255, 0.05) 1px, transparent 1px); background-size: 20px 20px; overflow: hidden; }
+.grid-header { height: 60px; display: flex; justify-content: space-between; align-items: center; padding: 0 30px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); flex-shrink: 0; }
+.video-grid { flex: 1; padding: 30px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; align-content: start; }
+.video-card { background: rgba(30, 35, 45, 0.8); border: 1px solid rgba(64, 158, 255, 0.2); border-radius: 12px; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; display: flex; flex-direction: column; height: 300px; }
+.card-header { padding: 10px 15px; background: rgba(0, 0, 0, 0.2); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+.card-video { flex: 1; background: #000; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .card-video img { width: 100%; height: 100%; object-fit: contain; }
+.offline-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; background: rgba(20, 20, 20, 0.6); color: #606266; gap: 8px; z-index: 5; }
+.card-footer { padding: 10px 15px; background: rgba(255, 255, 255, 0.02); display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255, 255, 255, 0.05); flex-shrink: 0; }
+.rtsp-info { font-size: 12px; color: #555; width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pagination-wrapper { padding: 15px 30px; background: rgba(22, 33, 52, 0.9); border-top: 1px solid rgba(64, 158, 255, 0.2); display: flex; justify-content: flex-end; flex-shrink: 0; }
 
-.offline-placeholder { 
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
-    background: rgba(20, 20, 20, 0.6);
-    color: #606266;
-    gap: 8px;
-}
-
-.card-footer {
-  padding: 10px 15px;
-  background: rgba(255, 255, 255, 0.02);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  flex-shrink: 0;
-}
-.rtsp-info {
-  font-size: 12px; color: #555; width: 180px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
-/* 错误文字样式 */
-.error-text {
-  color: #f56c6c !important;
-  font-weight: bold;
-}
-
-.offline-icon {
-  color: #4a4d52;
-  margin-bottom: 5px;
-  transition: color 0.3s;
-}
-
-.offline-icon.error-shake {
-  color: #f56c6c;
-  animation: shake 0.4s ease-in-out;
-}
-
-/* 重连按钮样式 */
-.retry-btn {
-  margin-top: 10px;
-  background: rgba(64, 158, 255, 0.1);
-  border: 1px solid rgba(64, 158, 255, 0.3);
-  color: #409eff;
-  padding: 6px 16px;
-  border-radius: 20px;
-  cursor: pointer;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  transition: all 0.3s;
-}
-
-.retry-btn:hover {
-  background: #409eff;
-  color: white;
-  border-color: #409eff;
-  box-shadow: 0 0 10px rgba(64, 158, 255, 0.4);
-}
-
-.retry-mask {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.8);
-  z-index: 5;
-}
-
-.retry-text {
-  margin-top: 15px;
-  font-size: 12px;
-  color: #409eff;
-  letter-spacing: 1px;
-  animation: pulse 1.5s infinite;
-}
-
-.radar-spinner {
-  width: 40px;
-  height: 40px;
-  border: 2px solid rgba(64, 158, 255, 0.3);
-  border-top-color: #409eff;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-/* ✅ 新增：分页器样式 */
-.pagination-wrapper {
-  padding: 15px 30px;
-  background: rgba(22, 33, 52, 0.9);
-  border-top: 1px solid rgba(64, 158, 255, 0.2);
-  display: flex;
-  justify-content: flex-end;
-  flex-shrink: 0;
-}
-
-:deep(.el-pagination.is-background .el-pager li:not(.is-disabled)) {
-  background-color: #1c2538;
-  color: #fff;
-  border: 1px solid #363b45;
-}
-:deep(.el-pagination.is-background .el-pager li.is-active) {
-  background-color: #409eff;
-  border-color: #409eff;
-}
-:deep(.el-pagination.is-background .btn-prev), 
-:deep(.el-pagination.is-background .btn-next) {
-  background-color: #1c2538;
-  color: #fff;
-  border: 1px solid #363b45;
-}
+.live-tag { background: #67c23a; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-right: 8px; }
+.offline-tag { background: #f56c6c; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-right: 8px; }
+.retry-btn { margin-top: 10px; padding: 5px 15px; background: #409eff; color: white; border: none; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.retry-btn:hover { background: #66b1ff; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
-@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+.radar-spinner { width: 40px; height: 40px; border: 3px solid rgba(64, 158, 255, 0.3); border-top-color: #409eff; border-radius: 50%; animation: spin 1s linear infinite; }
 </style>

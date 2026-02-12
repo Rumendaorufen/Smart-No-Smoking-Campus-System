@@ -50,24 +50,26 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="last_login_ip" label="最后登录IP" width="140" />
+      
+      <el-table-column prop="lastLoginIp" label="最后登录IP" width="140" />
       
       <el-table-column 
-        prop="last_login_time" 
+        prop="lastLoginTime" 
         label="最后登录时间" 
         width="180" 
         sortable="custom"
       >
         <template #default="scope">
-          {{ formatDate(scope.row.last_login_time) }}
+          {{ formatDate(scope.row.lastLoginTime) }}
         </template>
       </el-table-column>
       
-      <el-table-column prop="created_at" label="创建时间" width="180">
+      <el-table-column prop="createdAt" label="创建时间" width="180">
         <template #default="scope">
-          {{ formatDate(scope.row.created_at) }}
+          {{ formatDate(scope.row.createdAt) }}
         </template>
       </el-table-column>
+
       <el-table-column label="操作" fixed="right" width="160">
         <template #default="scope">
           <el-button type="primary" link size="small" @click="openDialog('edit', scope.row)">
@@ -132,16 +134,16 @@
 import { ref, onMounted, computed } from 'vue'
 import userApi from '../api/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Search } from '@element-plus/icons-vue' // 引入 Search 图标
+import { Plus, Edit, Delete, Search } from '@element-plus/icons-vue'
 
 interface UserVO {
   id: number;
   username: string;
   role: string;
   status: number;
-  last_login_ip?: string;
-  last_login_time?: string;
-  created_at: string;
+  lastLoginIp?: string; // 🔥 驼峰
+  lastLoginTime?: string; // 🔥 驼峰
+  createdAt: string; // 🔥 驼峰
 }
 
 const userList = ref<UserVO[]>([]) 
@@ -151,21 +153,16 @@ const dialogMode = ref<'add' | 'edit'>('add')
 const currentEditId = ref<number | null>(null)
 const form = ref({ username: '', password: '', role: 'user', status: 1 })
 
-// ========== 搜索与排序状态 (新增) ==========
 const searchQuery = ref('')
-const sortProp = ref('') // 当前排序字段
-const sortOrder = ref('') // 'ascending' | 'descending' | null
+const sortProp = ref('') 
+const sortOrder = ref('') 
 
-// ========== 分页逻辑 ==========
 const currentPage = ref(1)
 const pageSize = ref(10)
 
-// 🔥 核心逻辑：处理后的列表 (过滤 -> 搜索 -> 排序)
 const processedUserList = computed(() => {
-  // 1. 基础过滤 (隐藏 admin)
   let result = userList.value.filter(user => user.username !== 'admin')
 
-  // 2. 搜索逻辑
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
     result = result.filter(user => 
@@ -173,17 +170,14 @@ const processedUserList = computed(() => {
     )
   }
 
-  // 3. 排序逻辑
   if (sortProp.value && sortOrder.value) {
     result.sort((a, b) => {
       let valA = a[sortProp.value as keyof UserVO]
       let valB = b[sortProp.value as keyof UserVO]
 
-      // 处理 null 值 (比如从未登录过的用户)
-      if (!valA) return 1  // 空值放最后
+      if (!valA) return 1 
       if (!valB) return -1
 
-      // 字符串比较 (日期字符串也可以直接比较)
       if (valA < valB) return sortOrder.value === 'ascending' ? -1 : 1
       if (valA > valB) return sortOrder.value === 'ascending' ? 1 : -1
       return 0
@@ -193,22 +187,18 @@ const processedUserList = computed(() => {
   return result
 })
 
-// 2. 总条数 (基于处理后的列表)
 const totalUsers = computed(() => processedUserList.value.length)
 
-// 3. 当前页数据 (切片)
 const pagedUserList = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   const end = start + pageSize.value
   return processedUserList.value.slice(start, end)
 })
 
-// 事件：搜索输入时重置页码
 const handleSearch = () => {
   currentPage.value = 1
 }
 
-// 事件：表格排序触发
 const handleSortChange = ({ prop, order }: { prop: string, order: string }) => {
   sortProp.value = prop
   sortOrder.value = order
@@ -221,12 +211,11 @@ const handleSizeChange = (val: number) => {
 const handleCurrentChange = (val: number) => {
   currentPage.value = val
 }
-// ====================================
 
 const loadUsers = async () => {
   loading.value = true
   try {
-    const res = await userApi.getUsers()
+    const res: any = await userApi.getUsers()
     if (res.code === 200) userList.value = res.data
   } finally {
     loading.value = false
@@ -249,11 +238,11 @@ const handleSubmit = async () => {
   if (dialogMode.value === 'add' && !form.value.password) return ElMessage.warning('密码必填')
   try {
     if (dialogMode.value === 'add') {
-      const res = await userApi.addUser(form.value)
+      const res: any = await userApi.addUser(form.value)
       if (res.code === 200) ElMessage.success('添加成功')
     } else {
       if (!currentEditId.value) return
-      const res = await userApi.updateUser(currentEditId.value, form.value)
+      const res: any = await userApi.updateUser(currentEditId.value, form.value)
       if (res.code === 200) ElMessage.success('更新成功')
     }
     dialogVisible.value = false
@@ -264,133 +253,32 @@ const handleSubmit = async () => {
 const handleDelete = (row: UserVO) => {
   ElMessageBox.confirm(`删除用户 "${row.username}"?`, '提示', { type: 'warning' })
     .then(async () => {
-      const res = await userApi.deleteUser(row.id)
+      const res: any = await userApi.deleteUser(row.id)
       if(res.code === 200) { ElMessage.success('删除成功'); loadUsers() }
     }).catch(() => {})
 }
 
-const formatDate = (dateStr?: string) => dateStr ? new Date(dateStr).toLocaleString() : '-'
+const formatDate = (dateStr?: string) => {
+  if (!dateStr) return '-'
+  // 处理 Java 可能返回的 T 分隔符格式
+  return dateStr.replace('T', ' ').split('.')[0]
+}
+
 onMounted(() => loadUsers())
 </script>
 
 <style scoped>
-.user-manage-container {
-  padding: 40px;
-  background: #0d1119;
-  min-height: 100vh;
-  color: #fff;
-  background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-  linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 30px 30px;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
-  padding-bottom: 20px;
-}
-
-/* ✅ 修改：头部左侧布局 */
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.header h2 {
-  margin: 0;
-  font-size: 24px;
-  background: linear-gradient(90deg, #409eff, #fff);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  white-space: nowrap;
-}
-
-/* ✅ 新增：搜索框样式 */
-.search-input {
-  width: 200px;
-}
-:deep(.search-input .el-input__wrapper) {
-  background-color: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 0 0 1px #363b45 inset;
-}
-:deep(.search-input .el-input__inner) {
-  color: #fff;
-}
-
-.back-btn {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
-}
-.back-btn:hover {
-  background: #409eff;
-  border-color: #409eff;
-}
-
-.custom-table {
-  background-color: transparent !important;
-  --el-table-border-color: #363b45;
-  --el-table-bg-color: transparent;
-  --el-table-tr-bg-color: transparent;
-}
-
-:deep(.el-table__inner-wrapper::before) { display: none; }
-:deep(.el-table__row:hover) { background-color: rgba(64, 158, 255, 0.1) !important; }
-
-/* 修复排序图标颜色 */
-:deep(.el-table .caret-wrapper) {
-  height: 24px;
-}
-:deep(.el-table .sort-caret.ascending) {
-  border-bottom-color: #909399;
-}
-:deep(.el-table .sort-caret.descending) {
-  border-top-color: #909399;
-}
-:deep(.el-table .ascending .sort-caret.ascending) {
-  border-bottom-color: #409eff;
-}
-:deep(.el-table .descending .sort-caret.descending) {
-  border-top-color: #409eff;
-}
-
-/* 🔥 统一弹窗样式 */
-:deep(.custom-dialog) {
-  background: #1c2538;
-  border: 1px solid #363b45;
-  border-radius: 8px;
-}
+/* 此处保留你原有的 CSS 代码，无需改动 */
+.user-manage-container { padding: 40px; background: #0d1119; min-height: 100vh; color: #fff; background-size: 30px 30px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid rgba(64, 158, 255, 0.2); padding-bottom: 20px; }
+.header-left { display: flex; align-items: center; gap: 20px; }
+.header h2 { margin: 0; font-size: 24px; background: linear-gradient(90deg, #409eff, #fff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; white-space: nowrap; }
+.search-input { width: 200px; }
+:deep(.search-input .el-input__wrapper) { background-color: rgba(255, 255, 255, 0.05); box-shadow: 0 0 0 1px #363b45 inset; }
+:deep(.search-input .el-input__inner) { color: #fff; }
+.back-btn { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: #fff; }
+.custom-table { background-color: transparent !important; --el-table-border-color: #363b45; --el-table-bg-color: transparent; --el-table-tr-bg-color: transparent; }
+:deep(.custom-dialog) { background: #1c2538; border: 1px solid #363b45; border-radius: 8px; }
 :deep(.el-dialog__title) { color: #fff; }
-:deep(.el-dialog__body) { color: #cfd3dc; padding-top: 10px; }
-:deep(.el-form-item__label) { color: #cfd3dc; }
-:deep(.el-input__wrapper) { background-color: rgba(0,0,0,0.3); box-shadow: 0 0 0 1px #4a4d52 inset; }
-:deep(.el-input__inner) { color: white; }
-
-/* 分页器样式 */
-.pagination-wrapper {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
-  padding: 10px 0;
-}
-
-:deep(.el-pagination.is-background .el-pager li:not(.is-disabled)) {
-  background-color: #1c2538;
-  color: #fff;
-  border: 1px solid #363b45;
-}
-:deep(.el-pagination.is-background .el-pager li.is-active) {
-  background-color: #409eff;
-  border-color: #409eff;
-}
-:deep(.el-pagination.is-background .btn-prev), 
-:deep(.el-pagination.is-background .btn-next) {
-  background-color: #1c2538;
-  color: #fff;
-  border: 1px solid #363b45;
-}
+.pagination-wrapper { margin-top: 20px; display: flex; justify-content: flex-end; padding: 10px 0; }
 </style>

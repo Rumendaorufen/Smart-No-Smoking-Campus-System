@@ -17,10 +17,10 @@
       <div class="filter-bar">
         <el-form :inline="true" :model="query" class="dark-form">
           <el-form-item label="设备检索">
-            <el-input v-model="query.device_name" placeholder="设备名称" class="dark-input" clearable @keyup.enter="fetchData" @clear="fetchData" style="width: 150px" />
+            <el-input v-model="query.deviceName" placeholder="设备名称" class="dark-input" clearable @keyup.enter="fetchData" @clear="fetchData" style="width: 150px" />
           </el-form-item>
           <el-form-item label="审核人">
-            <el-input v-model="query.auditor_name" placeholder="审核员" class="dark-input" clearable @keyup.enter="fetchData" @clear="fetchData" style="width: 100px" />
+            <el-input v-model="query.auditorName" placeholder="审核员" class="dark-input" clearable @keyup.enter="fetchData" @clear="fetchData" style="width: 100px" />
           </el-form-item>
           <el-form-item label="时间范围">
             <el-date-picker v-model="dateRange" type="daterange" range-separator="至" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" @change="handleDateChange" class="dark-input" style="width: 230px" />
@@ -57,37 +57,37 @@
             <template #default="{ row }">
               <el-image 
                 style="width: 80px; height: 50px; border-radius: 4px" 
-                :src="getServerUrl(row.roi_url)" 
-                :preview-src-list="[getServerUrl(row.roi_url)]"
+                :src="getAiFileUrl(row.roiUrl)" 
+                :preview-src-list="[getAiFileUrl(row.roiUrl)]"
                 fit="cover" 
                 preview-teleported
               />
             </template>
           </el-table-column>
 
-          <el-table-column prop="device_name" label="设备位置" min-width="140" show-overflow-tooltip />
-          <el-table-column prop="created_at" label="报警时间" width="170" show-overflow-tooltip />
+          <el-table-column prop="deviceName" label="设备位置" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="createdAt" label="报警时间" width="170" show-overflow-tooltip />
           
-          <el-table-column prop="status" label="审核结果" width="100" align="center">
+          <el-table-column prop="auditStatus" label="审核结果" width="100" align="center">
             <template #default="{ row }">
-              <el-tag v-if="row.status === 1" type="danger" effect="dark">已确认</el-tag>
-              <el-tag v-else-if="row.status === 2" type="info" effect="plain">误报</el-tag>
+              <el-tag v-if="row.auditStatus === 1" type="danger" effect="dark">已确认</el-tag>
+              <el-tag v-else-if="row.auditStatus === 2" type="info" effect="plain">误报</el-tag>
               <el-tag v-else type="warning">未知</el-tag>
             </template>
           </el-table-column>
 
-          <el-table-column prop="auditor_name" label="审核人" width="100" />
-          <el-table-column prop="audit_time" label="审核时间" width="170" show-overflow-tooltip />
-          <el-table-column prop="audit_remark" label="审核备注" min-width="150" show-overflow-tooltip>
+          <el-table-column prop="auditorName" label="审核人" width="100" />
+          <el-table-column prop="auditTime" label="审核时间" width="170" show-overflow-tooltip />
+          <el-table-column prop="auditRemark" label="审核备注" min-width="150" show-overflow-tooltip>
             <template #default="{ row }">
-              <span v-if="row.audit_remark">{{ row.audit_remark }}</span>
+              <span v-if="row.auditRemark">{{ row.auditRemark }}</span>
               <span v-else style="color: #606266; font-style: italic">无</span>
             </template>
           </el-table-column>
 
           <el-table-column label="操作" width="180" fixed="right" align="center">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openVideo(row.video_url)">录像</el-button>
+              <el-button link type="primary" @click="openVideo(row.videoUrl)">录像</el-button>
               
               <el-button v-if="canEdit(row)" link type="warning" @click="openEditDialog(row)">
                 修改
@@ -107,7 +107,7 @@
     <div class="footer-section">
       <el-pagination
         v-model:current-page="query.page"
-        v-model:page-size="query.page_size"
+        v-model:page-size="query.pageSize"
         :total="total"
         :page-sizes="[10, 20, 50]" 
         layout="total, sizes, prev, pager, next, jumper"
@@ -124,8 +124,8 @@
     <el-dialog v-model="editDialogVisible" title="修正审核结果" width="400px" class="custom-dialog">
       <el-form :model="editForm" label-width="80px">
         <el-form-item label="当前状态">
-          <el-tag v-if="currentEditRow?.status === 1" type="danger">已确认违规</el-tag>
-          <el-tag v-else-if="currentEditRow?.status === 2" type="info">已标记误报</el-tag>
+          <el-tag v-if="currentEditRow?.auditStatus === 1" type="danger">已确认违规</el-tag>
+          <el-tag v-else-if="currentEditRow?.auditStatus === 2" type="info">已标记误报</el-tag>
         </el-form-item>
         <el-form-item label="修正为">
           <el-radio-group v-model="editForm.status">
@@ -151,10 +151,23 @@ import { getArchive, deleteAlarm, submitAudit, type Alarm } from '../api/alert'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, ArrowLeft } from '@element-plus/icons-vue'
 
-const BASE_API = 'http://localhost:5000/'
-const getServerUrl = (path: string) => {
+// 🔥 核心：视觉后端地址
+const AI_API = import.meta.env.VITE_APP_AI_API || 'http://localhost:5000'
+
+const getAiFileUrl = (path: string) => {
   if (!path) return ''
-  return path.startsWith('http') ? path : BASE_API + path
+  if (path.startsWith('http')) return path
+  
+  // 核心逻辑：
+  // 1. 如果路径是以 /api/monitor/video/ 开头的，把它替换掉
+  // 2. 确保路径以 / 开头
+  let cleanPath = path.replace('/api/monitor/video/', '')
+  if (!cleanPath.startsWith('/')) {
+    cleanPath = '/' + cleanPath
+  }
+
+  // 最终合成：http://localhost:5000/static/evidence/...
+  return `${AI_API}${cleanPath}`
 }
 
 const loading = ref(false)
@@ -170,8 +183,8 @@ const isAdmin = computed(() => currentUser.role === 'admin')
 
 const canEdit = (row: any) => {
   if (isAdmin.value) return true
-  if (!row.auditor_id) return false
-  return String(row.auditor_id) === String(currentUser.id)
+  if (!row.auditorId) return false // 适配驼峰 auditorId
+  return String(row.auditorId) === String(currentUser.id)
 }
 
 const editDialogVisible = ref(false)
@@ -180,13 +193,12 @@ const editForm = reactive({ status: 1, remark: '' })
 
 const query = reactive({
   page: 1,
-  // ✅ 1. 修改默认值为 10，避免一上来数据太多撑爆屏幕
-  page_size: 10, 
+  pageSize: 10, // 🔥 改为 pageSize
   status: undefined as number | undefined,
-  device_name: '',
-  auditor_name: '',
-  start_time: '',
-  end_time: ''
+  deviceName: '', // 🔥 改为驼峰
+  auditorName: '', // 🔥 改为驼峰
+  startTime: '', // 🔥 改为驼峰
+  endTime: '' // 🔥 改为驼峰
 })
 
 const fetchData = async () => {
@@ -194,17 +206,18 @@ const fetchData = async () => {
   try {
     const params: any = {
       page: query.page,
-      page_size: query.page_size,
-      start_time: query.start_time || undefined,
-      end_time: query.end_time || undefined,
-      device_name: query.device_name || undefined,
-      auditor_name: query.auditor_name || undefined
+      pageSize: query.pageSize,
+      startTime: query.startTime || undefined,
+      endTime: query.endTime || undefined,
+      deviceName: query.deviceName || undefined,
+      auditorName: query.auditorName || undefined
     }
     if (query.status !== undefined) {
       params.status = query.status
     }
     const res: any = await getArchive(params)
     if (res.code === 200) {
+      // 适配 Java 返回的结构
       list.value = res.data.list
       total.value = res.data.total
     }
@@ -220,18 +233,18 @@ const toggleStatus = (val: number) => {
 }
 
 const handleDateChange = (val: any) => {
-  if (val) { query.start_time = val[0] + ' 00:00:00'; query.end_time = val[1] + ' 23:59:59' } 
-  else { query.start_time = ''; query.end_time = '' }
+  if (val) { query.startTime = val[0] + ' 00:00:00'; query.endTime = val[1] + ' 23:59:59' } 
+  else { query.startTime = ''; query.endTime = '' }
   fetchData()
 }
 
 const resetQuery = () => {
   query.status = undefined; 
-  query.device_name = '';
-  query.auditor_name = ''; 
+  query.deviceName = '';
+  query.auditorName = ''; 
   dateRange.value = []; 
-  query.start_time = ''; 
-  query.end_time = ''; 
+  query.startTime = ''; 
+  query.endTime = ''; 
   query.page = 1; 
   fetchData()
 }
@@ -248,15 +261,14 @@ const handleDelete = async (id: number) => {
 
 const openVideo = (url: string) => {
   if (!url) return
-  let cleanUrl = url.replace('http://localhost:5000/', '')
-  currentVideo.value = `http://localhost:5000/api/v1/monitor/video/${cleanUrl}`
+  currentVideo.value = getAiFileUrl(url)
   videoVisible.value = true
 }
 
 const openEditDialog = (row: Alarm) => {
   currentEditRow.value = row
-  editForm.status = row.status
-  editForm.remark = row.audit_remark || ''
+  editForm.status = row.auditStatus || 1 // 适配 auditStatus
+  editForm.remark = row.auditRemark || '' // 适配 auditRemark
   editDialogVisible.value = true
 }
 
@@ -279,10 +291,8 @@ onMounted(() => fetchData())
 </script>
 
 <style scoped>
-/* 🔥🔥🔥 终极布局：固定定位系统 🔥🔥🔥 */
-
+/* 原有样式保持不变 */
 .archive-container {
-  /* 1. 强制铺满视口，不许溢出 */
   position: absolute;
   top: 0;
   left: 0;
@@ -291,12 +301,10 @@ onMounted(() => fetchData())
   background: #0d1119;
   color: #fff;
   padding: 20px;
-  overflow: hidden; /* 全局禁止滚动，只允许表格内部滚动 */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-
-/* 头部：自然高度 */
 .header-section {
   flex-shrink: 0;
   margin-bottom: 20px;
@@ -307,8 +315,6 @@ onMounted(() => fetchData())
 .page-header h2 { margin: 0; font-size: 24px; background: linear-gradient(90deg, #409eff, #fff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .back-btn { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: #fff; margin-right: 15px; }
 .back-btn:hover { background: #409eff; border-color: #409eff; }
-
-/* 筛选：自然高度 */
 .filter-section {
   flex-shrink: 0;
   background: rgba(22, 33, 52, 0.6);
@@ -317,17 +323,12 @@ onMounted(() => fetchData())
   border: 1px solid rgba(64, 158, 255, 0.1);
   margin-bottom: 15px;
 }
-.filter-bar { display: block; }
-
-/* ⚠️ 表格区域：霸占剩余空间 */
 .table-section {
-  flex: 1;             /* 占据所有剩余高度 */
-  position: relative;  /* 作为绝对定位子元素的基准点 */
-  overflow: hidden;    /* 隐藏溢出 */
-  min-height: 0;       /* 必须设置，否则Flex子项高度计算会有bug */
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
 }
-
-/* ⚠️ 表格内部包裹层：强制绝对定位撑满 */
 .table-inner-wrapper {
   position: absolute;
   top: 0;
@@ -335,24 +336,18 @@ onMounted(() => fetchData())
   right: 0;
   bottom: 0;
 }
-
-/* 表格样式 */
 .custom-table {
   background-color: transparent !important;
   --el-table-border-color: #363b45;
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
 }
-
-/* 底部：自然高度 */
 .footer-section {
   flex-shrink: 0;
   margin-top: 15px;
   display: flex;
   justify-content: flex-end;
 }
-
-/* 样式修正 */
 :deep(.el-table__inner-wrapper::before) { display: none; }
 :deep(.el-table__row:hover) { background-color: rgba(64, 158, 255, 0.1) !important; }
 :deep(.el-input__wrapper), :deep(.el-range-editor.el-input__wrapper), :deep(.el-textarea__inner) {

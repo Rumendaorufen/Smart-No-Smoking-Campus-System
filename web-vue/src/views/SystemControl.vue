@@ -20,10 +20,10 @@
         <el-card class="status-card chart-card" shadow="hover">
           <div class="chart-header">
             <div class="label"><el-icon><Files /></el-icon> 内存使用</div>
-            <div class="value ram-text">{{ systemStats.ram_percent }}%</div>
+            <div class="value ram-text">{{ systemStats.ramPercent }}%</div>
           </div>
           <div ref="ramChartRef" class="chart-container"></div>
-          <div class="chart-sub-text">{{ systemStats.ram_used }} GB 已用</div>
+          <div class="chart-sub-text">{{ systemStats.ramUsed }} GB 已用</div>
         </el-card>
       </el-col>
 
@@ -31,7 +31,7 @@
         <el-card class="status-card chart-card" shadow="hover">
           <div class="chart-header">
             <div class="label"><el-icon><Monitor /></el-icon> GPU 显存 (AI核心)</div>
-            <div class="value gpu-text">{{ systemStats.gpu.mem_percent }}%</div>
+            <div class="value gpu-text">{{ systemStats.gpu.memPercent }}%</div>
           </div>
           <div ref="gpuChartRef" class="chart-container"></div>
           <div class="chart-sub-text">
@@ -74,20 +74,20 @@
           </template>
           <div class="stats-grid">
             <div class="stat-item">
-              <div class="stat-num danger">{{ systemStats.business.today_alarms }}</div>
+              <div class="stat-num danger">{{ systemStats.business.todayAlarms }}</div>
               <div class="stat-label">今日报警</div>
             </div>
             <div class="stat-item">
-              <div class="stat-num warning">{{ systemStats.business.pending_audit }}</div>
+              <div class="stat-num warning">{{ systemStats.business.pendingAudit }}</div>
               <div class="stat-label">待审核</div>
             </div>
           </div>
-          <div class="stat-footer">系统启动于: {{ systemStats.business.boot_time.split(' ')[1] }}</div>
+          <div class="stat-footer">系统启动于: {{ systemStats.business.bootTime }}</div>
         </el-card>
       </el-col>
 
       <el-col :span="6">
-        <el-card class="status-card ai-card" shadow="hover" :class="{ 'ai-active': systemStats.global_ai }">
+        <el-card class="status-card ai-card" shadow="hover" :class="{ 'ai-active': systemStats.globalAi }">
           <template #header>
             <div class="card-header">
               <span>全局 AI 引擎</span>
@@ -96,17 +96,17 @@
           </template>
           <div class="ai-control-box">
             <div class="ai-status-text">
-              {{ systemStats.global_ai ? '🔥 引擎运行中' : '💤 引擎已暂停' }}
+              {{ systemStats.globalAi ? '🔥 引擎运行中' : '💤 引擎已暂停' }}
             </div>
             <el-switch
-              v-model="systemStats.global_ai"
+              v-model="systemStats.globalAi"
               size="large"
               inline-prompt
               active-text="ON"
               inactive-text="OFF"
-              style="--el-switch-on-color: #67c23a; --el-switch-off-color: #909399"
+              style="--el-switch-on-color: #67c23a; --el-switch-off-color: #f56c6c"
               :loading="aiLoading"
-              @change="(val: boolean | string | number) => handleGlobalAiToggle(val)"
+              :before-change="handleBeforeAiChange"
             />
           </div>
         </el-card>
@@ -120,7 +120,7 @@
               <el-icon><VideoCamera /></el-icon>
             </div>
           </template>
-          <div class="big-number">{{ systemStats.total_streams }}</div>
+          <div class="big-number">{{ systemStats.totalStreams }}</div>
           <div class="stat-text">路摄像头正在工作</div>
         </el-card>
       </el-col>
@@ -129,28 +129,9 @@
     <div class="device-list-section">
       <div class="section-header">
         <h3 class="section-title">摄像头接入矩阵</h3>
-        
         <div class="batch-actions">
-          <el-button 
-            type="success" 
-            size="small" 
-            plain
-            :icon="VideoPlay"
-            @click="handleBatchToggle(true)"
-            :loading="batchLoading"
-          >
-            一键开启全部
-          </el-button>
-          <el-button 
-            type="danger" 
-            size="small" 
-            plain 
-            :icon="SwitchButton"
-            @click="handleBatchToggle(false)"
-            :loading="batchLoading"
-          >
-            一键暂停全部
-          </el-button>
+          <el-button type="success" size="small" plain :icon="VideoPlay" @click="handleBatchToggle(true)" :loading="batchLoading">一键开启全部</el-button>
+          <el-button type="danger" size="small" plain :icon="SwitchButton" @click="handleBatchToggle(false)" :loading="batchLoading">一键暂停全部</el-button>
         </div>
       </div>
 
@@ -163,18 +144,18 @@
       >
         <el-table-column prop="id" label="ID" width="80" align="center" />
         <el-table-column prop="name" label="设备名称" min-width="150" />
-        <el-table-column prop="rtsp_url" label="RTSP 地址" min-width="250" show-overflow-tooltip />
+        <el-table-column prop="rtspUrl" label="RTSP 地址" min-width="250" show-overflow-tooltip />
         
         <el-table-column label="运行状态" width="120" align="center">
           <template #default="{ row }">
             <div class="status-indicator">
-              <span class="dot" :class="row.is_running ? 'green' : 'gray'"></span>
-              <span>{{ row.is_running ? '在线' : '离线' }}</span>
+              <span class="dot" :class="row.status === 1 ? 'green' : 'gray'"></span>
+              <span>{{ row.status === 1 ? '在线' : '离线' }}</span>
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="接入状态" width="150" align="center">
+        <el-table-column label="接入控制" width="150" align="center">
           <template #default="{ row }">
             <el-switch
               v-model="row.enabled"
@@ -183,21 +164,14 @@
               inactive-text="停用"
               style="--el-switch-on-color: #409eff; --el-switch-off-color: #f56c6c"
               :loading="row.loading"
-              @change="(val: boolean | string | number) => handleDeviceToggle(row, val)"
+              @change="(val: any) => handleDeviceToggle(row, val)"
             />
           </template>
         </el-table-column>
       </el-table>
 
       <div class="pagination-wrapper">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[5, 10]"
-          :background="true"
-          layout="total, prev, pager, next"
-          :total="totalDevices"
-        />
+        <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :page-sizes="[5, 10]" :background="true" layout="total, prev, pager, next" :total="totalDevices" />
       </div>
     </div>
   </div>
@@ -206,335 +180,225 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, computed, shallowRef, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { 
-  ArrowLeft, Cpu, Files, VideoCamera, Aim, Monitor, Coin, DataLine,
-  VideoPlay, SwitchButton // 引入新图标
-} from '@element-plus/icons-vue'
+import { ArrowLeft, Cpu, Files, VideoCamera, Aim, Monitor, Coin, DataLine, VideoPlay, SwitchButton } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import * as echarts from 'echarts'
 
 interface Device {
-  id: number
-  name: string
-  rtsp_url: string
-  enabled: boolean
-  is_running: boolean
-  ai_enabled: boolean
-  loading?: boolean
+  id: number; name: string; rtspUrl: string; enabled: boolean; status: number; loading?: boolean;
 }
 
 const router = useRouter()
-const request = axios.create({ baseURL: 'http://localhost:5000/api/v1', timeout: 5000 })
 
-request.interceptors.request.use(config => {
+// 🚀 API 配置核心
+const JAVA_BASE = import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080'
+const AI_BASE = import.meta.env.VITE_APP_AI_API || 'http://localhost:5000'
+
+const javaRequest = axios.create({ baseURL: `${JAVA_BASE}/api`, timeout: 8000 })
+const aiRequest = axios.create({ baseURL: AI_BASE, timeout: 1500 }) // 短超时探测
+
+const tokenInterceptor = (config: any) => {
   const token = localStorage.getItem('token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
-}, error => Promise.reject(error))
-
-request.interceptors.response.use(res => res, err => {
-  if (err.response?.status === 401) { router.push('/login'); }
-  return Promise.reject(err)
-})
+}
+javaRequest.interceptors.request.use(tokenInterceptor)
+aiRequest.interceptors.request.use(tokenInterceptor)
 
 const systemStats = reactive({
   cpu: 0,
-  ram_percent: 0, ram_used: 0,
-  total_streams: 0, global_ai: true,
-  gpu: { used: 0, total: 0, percent: 0, mem_percent: 0, name: 'N/A' },
+  ramPercent: 0, ramUsed: 0,
+  totalStreams: 0, globalAi: false,
+  gpu: { used: 0, total: 0, memPercent: 0, name: 'N/A' },
   disk: { total: 0, used: 0, free: 0, percent: 0 },
-  business: { today_alarms: 0, pending_audit: 0, boot_time: '-' }
+  business: { todayAlarms: 0, pendingAudit: 0, bootTime: '-' }
 })
 
 const deviceList = ref<Device[]>([])
-const aiLoading = ref(false)
-const batchLoading = ref(false) // ✅ 批量操作 loading
+const aiLoading = ref(false), batchLoading = ref(false)
 const timer = ref<number | null>(null)
 
-// Charts
+// --- ECharts 逻辑 ---
 const cpuChartRef = ref(null), ramChartRef = ref(null), gpuChartRef = ref(null)
 const cpuChart = shallowRef<echarts.ECharts | null>(null)
 const ramChart = shallowRef<echarts.ECharts | null>(null)
 const gpuChart = shallowRef<echarts.ECharts | null>(null)
-
 const maxDataPoints = 60
-const history = {
-  cpu: ref(new Array(maxDataPoints).fill(0)),
-  ram: ref(new Array(maxDataPoints).fill(0)),
-  gpu: ref(new Array(maxDataPoints).fill(0))
+const history = { 
+  cpu: ref(new Array(maxDataPoints).fill(0)), 
+  ram: ref(new Array(maxDataPoints).fill(0)), 
+  gpu: ref(new Array(maxDataPoints).fill(0)) 
 }
 
-const initCharts = () => {
-  if (cpuChartRef.value) {
-    cpuChart.value = echarts.init(cpuChartRef.value)
-    cpuChart.value.setOption(getChartOption('#67C23A', 'CPU'))
-  }
-  if (ramChartRef.value) {
-    ramChart.value = echarts.init(ramChartRef.value)
-    ramChart.value.setOption(getChartOption('#409EFF', 'RAM'))
-  }
-  if (gpuChartRef.value) {
-    gpuChart.value = echarts.init(gpuChartRef.value)
-    gpuChart.value.setOption(getChartOption('#E6A23C', 'VRAM'))
-  }
-  window.addEventListener('resize', handleResize)
-}
-
-const handleResize = () => {
-  cpuChart.value?.resize(); ramChart.value?.resize(); gpuChart.value?.resize();
-}
-
-const getChartOption = (color: string, name: string) => ({
+const getChartOption = (color: string) => ({
   grid: { left: 0, right: 0, top: 5, bottom: 0 },
   xAxis: { type: 'category', show: false, boundaryGap: false },
   yAxis: { type: 'value', min: 0, max: 100, show: false },
-  series: [{
-    name, type: 'line', showSymbol: false, smooth: true,
-    lineStyle: { width: 2, color },
-    areaStyle: {
-      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color }, { offset: 1, color: 'rgba(0,0,0,0)' }]),
-      opacity: 0.3
-    },
-    data: new Array(maxDataPoints).fill(0)
+  series: [{ 
+    type: 'line', showSymbol: false, smooth: true, 
+    lineStyle: { width: 2, color }, 
+    areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color }, { offset: 1, color: 'transparent' }]), opacity: 0.3 }, 
+    data: new Array(maxDataPoints).fill(0) 
   }]
 })
 
-const updateCharts = () => {
-  history.cpu.value.push(systemStats.cpu); history.cpu.value.shift();
-  history.ram.value.push(systemStats.ram_percent); history.ram.value.shift();
-  history.gpu.value.push(systemStats.gpu.mem_percent); history.gpu.value.shift();
+const initCharts = () => {
+  if (cpuChartRef.value) cpuChart.value = echarts.init(cpuChartRef.value); cpuChart.value?.setOption(getChartOption('#67C23A'))
+  if (ramChartRef.value) ramChart.value = echarts.init(ramChartRef.value); ramChart.value?.setOption(getChartOption('#409EFF'))
+  if (gpuChartRef.value) gpuChart.value = echarts.init(gpuChartRef.value); gpuChart.value?.setOption(getChartOption('#E6A23C'))
+}
 
+const updateCharts = () => {
+  history.cpu.value.push(systemStats.cpu); history.cpu.value.shift()
+  history.ram.value.push(systemStats.ramPercent); history.ram.value.shift()
+  history.gpu.value.push(systemStats.gpu.memPercent); history.gpu.value.shift()
   cpuChart.value?.setOption({ series: [{ data: history.cpu.value }] })
   ramChart.value?.setOption({ series: [{ data: history.ram.value }] })
   gpuChart.value?.setOption({ series: [{ data: history.gpu.value }] })
 }
 
-const diskColor = (percentage: number) => {
-  if (percentage > 90) return '#f56c6c'
-  if (percentage > 70) return '#e6a23c'
-  return '#67c23a'
+// --- 🚀 业务控制逻辑：解决 Python 离线回跳 ---
+
+const handleBeforeAiChange = async () => {
+  const target = !systemStats.globalAi
+  aiLoading.value = true
+  try {
+    const res = await aiRequest.post('/api/v1/system/global_ai', { enabled: target })
+    if (res.data.code === 200) {
+      javaRequest.post('/system/control/global_ai_db', { enabled: target })
+      return true
+    }
+    throw new Error()
+  } catch (e) {
+    ElMessage.error('❌ 指令拦截：AI 服务器处于下线状态')
+    systemStats.globalAi = false // 强制数据层保持 false
+    return false // 物理拦截滑动
+  } finally {
+    aiLoading.value = false
+  }
 }
 
+const fetchStatus = async () => {
+  let isAiServerAlive = false
+  try {
+    await aiRequest.get('/api/v1/system/global_ai')
+    isAiServerAlive = true
+  } catch (e) {
+    isAiServerAlive = false
+  }
+
+  try {
+    const res = await javaRequest.get('/system/status')
+    if (res.data.code === 200) {
+      const d = res.data.data
+      systemStats.cpu = d.cpu || 0
+      systemStats.ramPercent = d.ramPercent || 0
+      systemStats.ramUsed = d.ramUsed || 0
+      systemStats.gpu = d.gpu || systemStats.gpu
+      systemStats.disk = d.disk || systemStats.disk
+      
+      const biz = d.business || {}
+      systemStats.business.todayAlarms = biz.todayAlarms || 0
+      systemStats.business.pendingAudit = biz.pendingAudit || 0
+      systemStats.business.bootTime = biz.bootTime || '-'
+      
+      if (!aiLoading.value) {
+        if (!isAiServerAlive) {
+          systemStats.globalAi = false // Python 挂了，强制 OFF
+        } else {
+          systemStats.globalAi = !!(d.global_ai ?? d.globalAi)
+        }
+      }
+      deviceList.value = (biz.devices || []).map((dev: any) => ({ ...dev, loading: false }))
+      systemStats.totalStreams = deviceList.value.filter(d => d.status === 1).length
+      updateCharts()
+    }
+  } catch (e) {}
+}
+
+const handleDeviceToggle = async (row: Device, val: boolean) => {
+  row.loading = true
+  try {
+    const res = await javaRequest.put(`/monitor/devices/${row.id}`, { enabled: val })
+    if (res.data.code === 200) ElMessage.success(`${row.name} 已更新`)
+    else row.enabled = !val
+  } catch (e) { row.enabled = !val }
+  finally { row.loading = false }
+}
+
+const handleBatchToggle = async (enable: boolean) => {
+  const targets = deviceList.value.filter(d => d.enabled !== enable)
+  if (targets.length === 0) return ElMessage.info('状态无需变更')
+  try {
+    await ElMessageBox.confirm(`确定批量操作？`)
+    batchLoading.value = true
+    await Promise.all(targets.map(d => javaRequest.put(`/monitor/devices/${d.id}`, { enabled: enable })))
+    fetchStatus()
+  } catch {}
+  finally { batchLoading.value = false }
+}
+
+const diskColor = (p: number) => p > 90 ? '#f56c6c' : (p > 70 ? '#e6a23c' : '#67c23a')
 const currentPage = ref(1), pageSize = ref(5)
 const totalDevices = computed(() => deviceList.value.length)
 const pagedDeviceList = computed(() => deviceList.value.slice((currentPage.value - 1) * pageSize.value, currentPage.value * pageSize.value))
-
-const fetchStatus = async () => {
-  try {
-    const res = await request.get('/system/status')
-    if (res.data.code === 200) {
-      const d = res.data.data
-      systemStats.cpu = d.cpu
-      systemStats.ram_percent = d.ram_percent
-      systemStats.ram_used = d.ram_used
-      systemStats.total_streams = d.total_streams
-      systemStats.gpu = d.gpu || { mem_percent: 0, used: 0, total: 0, name: 'No GPU' }
-      systemStats.disk = d.disk || { percent: 0, free: 0 }
-      systemStats.business = d.business || { today_alarms: 0, pending_audit: 0, boot_time: '-' }
-      
-      if (!aiLoading.value) systemStats.global_ai = d.global_ai
-      
-      const newDevices: Device[] = d.devices
-      
-      newDevices.forEach(newDev => {
-        const existingDev = deviceList.value.find(o => o.id === newDev.id)
-        if (existingDev) {
-          existingDev.name = newDev.name
-          existingDev.rtsp_url = newDev.rtsp_url
-          // 如果正在进行批量操作或单点操作，不要覆盖 enabled 状态，防止 UI 跳变
-          if (!batchLoading.value && !existingDev.loading) {
-             existingDev.enabled = newDev.enabled
-          }
-          existingDev.is_running = newDev.is_running
-          existingDev.ai_enabled = newDev.ai_enabled
-        } else {
-          deviceList.value.push({ ...newDev, loading: false })
-        }
-      })
-
-      if (deviceList.value.length > newDevices.length) {
-         const newIds = new Set(newDevices.map(d => d.id))
-         for (let i = deviceList.value.length - 1; i >= 0; i--) {
-            const currentItem = deviceList.value[i]
-            if (currentItem && !newIds.has(currentItem.id)) {
-               deviceList.value.splice(i, 1)
-            }
-         }
-      }
-      updateCharts()
-    }
-  } catch (e) { console.error(e) }
-}
-
-const handleDeviceToggle = async (row: Device, val: boolean | string | number) => {
-  const isEnabled = !!val 
-  row.loading = true
-  try {
-    const res = await request.post('/system/control/device', { id: row.id, enable: isEnabled })
-    if (res.data.code === 200) {
-      ElMessage.success(isEnabled ? `设备 ${row.name} 已启用` : `设备 ${row.name} 已停用`)
-      row.enabled = isEnabled 
-    } else {
-      row.enabled = !isEnabled 
-      ElMessage.error(res.data.msg || '操作失败')
-    }
-  } catch (e) { 
-    row.enabled = !isEnabled
-    ElMessage.error('网络请求失败') 
-  } finally { 
-    row.loading = false 
-    setTimeout(fetchStatus, 500) 
-  }
-}
-
-// ✅ 新增：一键批量控制函数
-const handleBatchToggle = async (enable: boolean) => {
-  const actionText = enable ? '开启' : '暂停'
-  
-  // 1. 过滤出需要变更的设备 (例如开启时，只操作当前是关闭状态的设备)
-  const targets = deviceList.value.filter(d => d.enabled !== enable)
-  
-  if (targets.length === 0) {
-    return ElMessage.info(`所有设备已经处于${actionText}状态`)
-  }
-
-  // 2. 确认框
-  try {
-    await ElMessageBox.confirm(
-      `确定要一键【${actionText}】这 ${targets.length} 台设备吗？\n这就需要一定时间处理。`, 
-      '批量操作确认', 
-      {
-        confirmButtonText: '确定执行',
-        cancelButtonText: '取消',
-        type: enable ? 'success' : 'warning'
-      }
-    )
-  } catch {
-    return // 用户取消
-  }
-
-  batchLoading.value = true
-  
-  // 3. 并发执行请求 (前端并发，无需改后端)
-  const promises = targets.map(async (device) => {
-    device.loading = true // 让表格行也转圈
-    try {
-      const res = await request.post('/system/control/device', { id: device.id, enable })
-      if (res.data.code === 200) {
-        device.enabled = enable
-      }
-    } catch (e) {
-      console.error(`Device ${device.id} fail`)
-    } finally {
-      device.loading = false
-    }
-  })
-
-  // 4. 等待所有完成
-  await Promise.all(promises)
-  
-  ElMessage.success(`批量${actionText}操作完成`)
-  batchLoading.value = false
-  fetchStatus() // 最后刷新一次总状态
-}
-
-const handleGlobalAiToggle = async (val: boolean | string | number) => {
-  const isEnabled = !!val
-  aiLoading.value = true
-  try {
-    const res = await request.post('/system/control/global_ai', { enabled: isEnabled })
-    if (res.data.code === 200) {
-      ElMessage.success(`AI 引擎已${isEnabled ? '启动' : '暂停'}`)
-    } else {
-      systemStats.global_ai = !isEnabled; ElMessage.error(res.data.msg)
-    }
-  } catch (e) { systemStats.global_ai = !isEnabled; ElMessage.error('请求失败') } 
-  finally { aiLoading.value = false }
-}
 
 onMounted(() => {
   fetchStatus()
   nextTick(() => initCharts())
   timer.value = window.setInterval(fetchStatus, 3000)
+  window.addEventListener('resize', () => {
+    cpuChart.value?.resize(); ramChart.value?.resize(); gpuChart.value?.resize();
+  })
 })
 
 onUnmounted(() => {
   if (timer.value) clearInterval(timer.value)
-  window.removeEventListener('resize', handleResize)
   cpuChart.value?.dispose(); ramChart.value?.dispose(); gpuChart.value?.dispose()
 })
 </script>
 
 <style scoped>
-.system-container { min-height: 100vh; background: #0d1119; color: #fff; padding: 30px; }
+.system-container { min-height: 100vh; background: #0d1119; color: #fff; padding: 30px; font-family: 'PingFang SC', sans-serif; }
 .page-header { display: flex; align-items: center; margin-bottom: 20px; gap: 15px; }
 .page-header h2 { margin: 0; font-size: 22px; background: linear-gradient(90deg, #409eff, #fff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
 .back-btn { background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: #fff; }
 .row-section { margin-bottom: 20px; }
-
-/* 通用卡片 */
-.status-card { 
-  background: rgba(30, 35, 45, 0.6); border: 1px solid rgba(64, 158, 255, 0.1); 
-  color: #fff; backdrop-filter: blur(10px); height: 160px; display: flex; flex-direction: column;
-}
+.status-card { background: rgba(30, 35, 45, 0.6); border: 1px solid rgba(64, 158, 255, 0.1); color: #fff; backdrop-filter: blur(10px); height: 160px; display: flex; flex-direction: column; border-radius: 12px; }
 :deep(.el-card__body) { flex: 1; padding: 15px 20px; display: flex; flex-direction: column; justify-content: center; position: relative; }
-
-/* 图表卡片 */
-.chart-card :deep(.el-card__body) { padding: 0; }
-.chart-header { position: absolute; top: 15px; left: 20px; z-index: 10; }
-.chart-header .label { font-size: 14px; color: #909399; display: flex; align-items: center; gap: 5px; }
+.chart-card :deep(.el-card__body) { padding: 0; overflow: hidden; }
+.chart-header { position: absolute; top: 15px; left: 20px; z-index: 10; pointer-events: none; }
+.chart-header .label { font-size: 13px; color: #909399; display: flex; align-items: center; gap: 5px; }
 .chart-header .value { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; margin-top: 5px; }
 .cpu-text { color: #67C23A; } .ram-text { color: #409EFF; } .gpu-text { color: #E6A23C; }
 .chart-container { width: 100%; height: 100%; }
-.chart-sub-text { position: absolute; bottom: 10px; right: 15px; font-size: 12px; color: #909399; }
-
-/* 信息卡片 (Info Card) */
-.info-card :deep(.el-card__header) { border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding: 10px 15px; display: block; }
-.card-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #909399; }
-
-/* 磁盘信息 */
+.chart-sub-text { position: absolute; bottom: 10px; right: 15px; font-size: 11px; color: #606266; }
+.info-card :deep(.el-card__header) { border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding: 10px 15px; display: block; font-size: 13px; color: #909399; }
+.card-header { display: flex; justify-content: space-between; align-items: center; }
 .disk-info { display: flex; align-items: center; justify-content: center; gap: 20px; }
 .disk-text { text-align: left; font-size: 12px; color: #909399; }
 .disk-text span { display: block; font-size: 18px; color: #fff; font-weight: bold; margin-top: 5px; }
-
-/* 业务统计网格 */
 .stats-grid { display: flex; justify-content: space-around; margin-bottom: 10px; }
 .stat-item { text-align: center; }
 .stat-num { font-size: 24px; font-weight: bold; }
 .stat-num.danger { color: #F56C6C; } .stat-num.warning { color: #E6A23C; }
 .stat-label { font-size: 12px; color: #909399; margin-top: 5px; }
 .stat-footer { font-size: 11px; color: #606266; text-align: center; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px; }
-
-/* AI 卡片 */
 .ai-card.ai-active { border-color: rgba(103, 194, 58, 0.5); box-shadow: 0 0 15px rgba(103, 194, 58, 0.2) inset; }
 .ai-control-box { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.ai-status-text { font-weight: bold; font-size: 16px; }
-.big-number { font-size: 40px; font-weight: bold; color: #409eff; margin: 10px 0; text-align: center; }
-.stat-text { font-size: 12px; color: #909399; text-align: center; }
-
-/* 列表 & 分页 */
-.device-list-section { margin-top: 10px; background: rgba(22, 33, 52, 0.6); padding: 20px; border-radius: 8px; }
-
-/* ✅ 修改：Header 改为 Flex 布局，适应右侧按钮 */
-.section-header { 
-  display: flex; 
-  justify-content: space-between; 
-  align-items: center; 
-  margin-bottom: 15px; 
-  border-left: 4px solid #409eff; 
-  padding-left: 10px; 
-}
-.section-title { margin: 0; font-size: 16px; }
-.batch-actions { display: flex; gap: 10px; }
-
-.status-indicator { display: flex; align-items: center; gap: 6px; justify-content: center; }
+.ai-status-text { font-weight: bold; font-size: 16px; letter-spacing: 1px; }
+.big-number { font-size: 44px; font-weight: 800; color: #409eff; text-align: center; font-family: 'Arial Black'; }
+.stat-text { font-size: 12px; color: #909399; text-align: center; margin-top: 5px; }
+.device-list-section { margin-top: 20px; background: rgba(22, 33, 52, 0.4); padding: 25px; border-radius: 12px; border: 1px solid rgba(64, 158, 255, 0.1); }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-left: 4px solid #409eff; padding-left: 15px; }
+.section-title { margin: 0; font-size: 17px; font-weight: 600; }
+.batch-actions { display: flex; gap: 12px; }
+.status-indicator { display: flex; align-items: center; gap: 8px; justify-content: center; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
-.dot.green { background: #67c23a; box-shadow: 0 0 5px #67c23a; }
+.dot.green { background: #67c23a; box-shadow: 0 0 8px #67c23a; }
 .dot.gray { background: #909399; }
-.pagination-wrapper { margin-top: 15px; display: flex; justify-content: flex-end; }
-
-/* 表格覆盖 */
+.pagination-wrapper { margin-top: 20px; display: flex; justify-content: flex-end; }
 .custom-table { background-color: transparent !important; --el-table-border-color: #363b45; --el-table-bg-color: transparent; --el-table-tr-bg-color: transparent; }
 :deep(.el-table__inner-wrapper::before) { display: none; }
 :deep(.el-table__row:hover) { background-color: rgba(64, 158, 255, 0.1) !important; }

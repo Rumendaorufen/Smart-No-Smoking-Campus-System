@@ -1,36 +1,31 @@
+# web-flask/app/core/stream_loader.py
+
 import cv2
 import time
 import threading
 import os
+import requests
 import logging
 import math
+import socket
 from collections import defaultdict
-from app.core.detector import SmokingDetector
-from app.core.recorder import EvidenceRecorder
-from app.models import db, Alarms, Devices
 from app.core.detector import get_detector
+from app.core.recorder import EvidenceRecorder
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 🔇 屏蔽 OpenCV/FFmpeg 底层疯狂报错的噪音
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 os.environ["OPENCV_FFMPEG_LOG_LEVEL"] = "quiet"
 
-# ==========================================
-# 辅助类
-# ==========================================
+# 🚀 辅助类：用于追踪烟头出现的持续性
 class SmokeEvent:
     def __init__(self):
-        self.start_time = time.time()
         self.last_seen_time = time.time()
         self.frame_count = 0     
         self.is_confirmed = False 
 
-# ==========================================
-# StreamLoader: 单个摄像头的管理单元
-# ==========================================
 class StreamLoader:
     def __init__(self, camera_id: int, rtsp_url: str, app=None):
         self.camera_id = camera_id
@@ -38,179 +33,83 @@ class StreamLoader:
         self.app = app 
         self.lock = threading.Lock()
         
-        # AI & 录像组件
         self.detector = get_detector()
         self.recorder = EvidenceRecorder(save_dir="app/static/evidence", fps=25, pre_record_sec=2)
         
-        # 运行状态
         self.running = False
         self.cap = None
         self.latest_frame = None   
         self.output_frame = None   
-        
-        # ✅ 新增：AI 功能开关，默认开启
         self.ai_enabled = True 
-
-        # AI 逻辑状态
-        self.smoke_events = defaultdict(SmokeEvent)
-        self.alarm_threshold_frames = 15
-        self.lost_timeout = 2.0
         self.last_read_time = time.time()
         
-        # 动态冷却状态字典
-        self.active_cooldowns = {}
-        self.alarm_cooldown = 300.0
-        self.alarm_radius = 200 
+        # 🚀 报警判定参数 (从你的旧代码迁移)
+        self.smoke_events = defaultdict(SmokeEvent)
+        self.alarm_threshold_frames = 15 # 连续15帧才算报警
+        self.lost_timeout = 2.0         # 烟头消失2秒后清除事件
+        self.active_cooldowns = {}      # 动态冷却字典
+        self.alarm_cooldown = 300.0     # 5分钟冷却
+        self.alarm_radius = 200         # 200像素范围判定为同一地点
 
-        # 信号量
         self.reconnect_requested = False
-        
-        # 连续错误计数器
-        self.consecutive_errors = 0
-
         self.start_lock = threading.Lock() 
 
-    # ✅ 新增方法：动态开关 AI 检测
     def set_ai_status(self, enabled: bool):
         self.ai_enabled = enabled
         logger.info(f"🤖 Cam {self.camera_id} AI Status -> {enabled}")
 
-    def start(self) -> bool:
-        with self.start_lock:
-            if self.running:
-                logger.warning(f"⚠️ Cam {self.camera_id} 已经在运行中，跳过启动")
-                return True
-                
-            self.running = True
-            logger.info(f"🚀 Cam {self.camera_id} 启动线程...")
-            
-            # 启动各个线程
-            threading.Thread(target=self._reader_thread, daemon=True).start()
-            threading.Thread(target=self._processor_thread, daemon=True).start()
-            threading.Thread(target=self._watchdog_thread, daemon=True).start()
-            return True
-
-    def stop(self):
-        logger.info(f"🛑 [StreamLoader] 收到停止指令: Cam {self.camera_id}")
-        self.running = False  # 1. 关掉总开关
-        
-        # 更新数据库状态
-        self._update_db_status(0)
-
-        # 2. ⚡️ 暴力释放资源，打断阻塞
-        with self.lock:
-            if self.cap:
-                try:
-                    self.cap.release()
-                except Exception as e:
-                    logger.error(f"⚠️ Release error: {e}")
-                finally:
-                    self.cap = None # 彻底置空
-        
-        logger.info(f"💀 [StreamLoader] 资源已释放: Cam {self.camera_id}")
-
     def _update_db_status(self, status):
-        if not self.app: return
+        def notify_java():
+            try:
+                java_sync_url = "http://localhost:8080/api/monitor/devices/sync-status"
+                requests.post(java_sync_url, json={"id": self.camera_id, "status": status}, timeout=1)
+            except: pass
+        threading.Thread(target=notify_java, daemon=True).start()
+
+    def _check_network_quick(self):
         try:
-            with self.app.app_context():
-                device = Devices.query.get(self.camera_id)
-                if device and device.status != status:
-                    device.status = status
-                    db.session.commit()
-        except Exception as e:
-            logger.error(f"❌ DB Update Error: {e}")
+            parts = self.rtsp_url.split('@')[-1].split('/')[0].split(':')
+            ip = parts[0]
+            port = int(parts[1]) if len(parts) > 1 else 554
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                return s.connect_ex((ip, port)) == 0
+        except: return False
 
     def _connect(self):
         try:
             if self.cap: self.cap.release()
-            
-            # 🚀 核心修复 1: 强制使用 TCP (rtsp_transport;tcp)
-            # TCP 保证数据包按顺序到达，绝不会出现花屏和 h264 error
-            # 增大 stimeout (超时时间) 到 5秒 (5000000微秒)，防止网络波动误判断流
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000|max_delay;500000"
-            
-            self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-            
-            if self.cap.isOpened():
-                # 🚀 核心修复 2: 禁用 OpenCV 内部缓冲区，避免延时累积
-                # BUFFERSIZE=0 意味着一旦读慢了，旧帧直接丢弃，永远只拿最新帧
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 0) 
-                
-                logger.info(f"✅ Cam {self.camera_id} Connected (TCP Mode).")
-                self._update_db_status(1)
-                self.consecutive_errors = 0 
-                return True
-            else:
-                logger.warning(f"❌ Cam {self.camera_id} Failed to open RTSP stream.")
+            if not self._check_network_quick():
                 self._update_db_status(0)
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
+                return False
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;2000000|probesize;32768"
+            self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+            if self.cap.isOpened():
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) 
+                logger.info(f"✅ Cam {self.camera_id} 连接成功")
+                return True
             self._update_db_status(0)
-        return False
+            return False
+        except Exception: return False
 
     def _reader_thread(self):
-        logger.info(f"Cam {self.camera_id} Reader Started")
-        if not self._connect():
-            logger.warning(f"Cam {self.camera_id} init failed.")
-
         while self.running:
-            if not self.running: break
+            if not self.cap or not self.cap.isOpened() or self.reconnect_requested:
+                if not self._connect():
+                    time.sleep(5); continue
+                self.reconnect_requested = False
 
             try:
-                # 响应看门狗
-                if self.reconnect_requested:
-                    self._update_db_status(0)
-                    self._connect()
-                    self.reconnect_requested = False
-                    self.last_read_time = time.time()
-
-                if not self.cap or not self.cap.isOpened():
-                    if not self.running: break
-                    time.sleep(2)
-                    self._connect()
-                    continue
-                
-                try:
-                    grabbed = self.cap.grab()
-                except Exception:
-                    break
-
-                if not self.running: break
-
-                if grabbed:
-                    ret, frame = self.cap.retrieve()
-                    if ret and frame is not None and frame.size > 0:
-                        with self.lock:
-                            self.latest_frame = frame
-                            self.last_read_time = time.time()
-                            self.consecutive_errors = 0 
-                    else:
-                        self.consecutive_errors += 1
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    if time.time() - self.last_read_time > 10.0: self._update_db_status(1)
+                    with self.lock:
+                        self.latest_frame = frame
+                        self.last_read_time = time.time()
                 else:
-                    self.consecutive_errors += 1
-                
-                if self.consecutive_errors > 30:
-                    logger.warning(f"⚡ Cam {self.camera_id} stream corruption detected! Force reconnecting...")
                     self.reconnect_requested = True
-                    self.consecutive_errors = 0
-                    time.sleep(0.5)
-
-            except Exception as e:
-                if self.running:
-                    logger.error(f"Reader loop error: {e}")
-                time.sleep(1)
-        
-        logger.info(f"👋 Reader Thread Exited: Cam {self.camera_id}")
-
-    def _watchdog_thread(self):
-        """看门狗：监控 Reader 是否卡死"""
-        while self.running:
-            if time.time() - self.last_read_time > 15.0:
-                if not self.reconnect_requested:
-                    logger.warning(f"🚨 Cam {self.camera_id} Timeout/Frozen! Requesting restart...")
-                    self.reconnect_requested = True
-                    self._update_db_status(0)
-            time.sleep(2)
+                    time.sleep(1)
+            except: time.sleep(1)
 
     def _processor_thread(self):
         while self.running:
@@ -220,289 +119,240 @@ class StreamLoader:
                     frame_to_process = self.latest_frame.copy()
             
             if frame_to_process is None:
-                time.sleep(0.1)
-                continue
+                time.sleep(0.1); continue
 
+            # 1. 录像缓冲
             self.recorder.add_frame(frame_to_process)
             self.recorder.process_recording(frame_to_process)
 
-            # ✅ 修改：根据开关决定是否运行 AI 检测
+            # 2. AI 核心逻辑处理
             detections = []
             if self.ai_enabled:
-                detections = self._run_ai_logic(frame_to_process)
-            
-            # 绘图 (如果没有 AI，就只画原图，不画框)
+                try:
+                    # 获取原始检测结果 (人 + 烟)
+                    detections = self.detector.detect(frame_to_process)
+                    # 🚀 运行报警判定逻辑
+                    detections = self._handle_alarm_logic(frame_to_process, detections)
+                except Exception as e:
+                    logger.error(f"AI Logic Error Cam {self.camera_id}: {e}")
+
+            # 3. 绘图与推流输出
             final_view = self._draw_ui(frame_to_process, detections)
-            
-            self.output_frame = cv2.resize(final_view, (1280, 720))
+            with self.lock:
+                self.output_frame = cv2.resize(final_view, (1280, 720))
             time.sleep(0.03)
 
-    def _run_ai_logic(self, frame):
-        h, w = frame.shape[:2]
+    # 🚀 从旧代码迁移：报警核心逻辑判定
+    def _handle_alarm_logic(self, frame, detections):
         current_time = time.time()
-        
-        # 1. AI 推理
-        detections = self.detector.detect(frame)
         persons = [d for d in detections if d['label'] == 'person']
         cigarettes = [d for d in detections if d['label'] == 'cigarette']
         
-        # 2. 🟢 维护阶段：更新冷却圈位置
-        current_pids = {p['id']: p['box'] for p in persons}
-        
-        keys_to_remove = []
-        for key, record in self.active_cooldowns.items():
-            if current_time - record['time'] > self.alarm_cooldown:
-                keys_to_remove.append(key)
-                continue
-            
-            if isinstance(key, int):
-                if key in current_pids:
-                    box = current_pids[key]
-                    cx, cy = (box[0] + box[2])/2, (box[1] + box[3])/2
-                    record['pos'] = (cx, cy)
-                    record['last_seen'] = current_time 
-                else:
-                    pass
+        # A. 更新冷却状态
+        self._update_cooldowns(current_time, persons)
 
-        for k in keys_to_remove: 
-            del self.active_cooldowns[k]
-
-        # 3. 🔴 判定阶段
+        # B. 判定每个检测到的烟头
         for cig in cigarettes:
-            cid = cig['id']
-            conf = cig['conf']
+            cid = cig.get('id', 0)
             cbox = cig['box']
             
             event = self.smoke_events[cid]
             event.last_seen_time = current_time
             event.frame_count += 1
             
+            # 只有达到帧数阈值才准备报警
             if event.frame_count >= self.alarm_threshold_frames:
-                cig['is_alarm'] = True
+                cig['is_alarm'] = True # 给 UI 绘图用
                 
                 if not event.is_confirmed:
-                    c_cx = (cbox[0] + cbox[2]) / 2
-                    c_cy = (cbox[1] + cbox[3]) / 2
-                    
-                    is_cooling_down = False
-                    
-                    for record in self.active_cooldowns.values():
-                        rx, ry = record['pos']
-                        dist = math.sqrt((c_cx - rx)**2 + (c_cy - ry)**2)
-                        if dist < self.alarm_radius:
-                            is_cooling_down = True
-                            break 
-                    
-                    if not is_cooling_down:
+                    # 检查冷却
+                    c_cx, c_cy = (cbox[0]+cbox[2])/2, (cbox[1]+cbox[3])/2
+                    if not self._is_in_cooldown(c_cx, c_cy):
                         event.is_confirmed = True
                         owner_id = self._match_person_id(cbox, persons)
-                        logger.warning(f"🔥 ALARM TRIGGERED: Cam {self.camera_id}")
-                        self._trigger_alarm_save(frame, owner_id, conf, w, h)
-                        
-                        if owner_id is not None:
-                            self.active_cooldowns[owner_id] = {
-                                'pos': (c_cx, c_cy), 
-                                'time': current_time,
-                                'type': 'dynamic'
-                            }
-                        else:
-                            static_key = f"static_{time.time()}_{cid}"
-                            self.active_cooldowns[static_key] = {
-                                'pos': (c_cx, c_cy),
-                                'time': current_time,
-                                'type': 'static'
-                            }
+                        logger.warning(f"🔥 [ALARM] Cam {self.camera_id} 检测到吸烟行为！")
+                        # 触发截图、录像、上报
+                        self._trigger_alarm_save(frame, owner_id, cig['conf'])
+                        # 记录冷却
+                        self._add_cooldown(owner_id, c_cx, c_cy, current_time)
             else:
                 cig['is_alarm'] = False
 
+        # C. 清理过期事件
         expired = [tid for tid, evt in self.smoke_events.items() if current_time - evt.last_seen_time > self.lost_timeout]
         for tid in expired: del self.smoke_events[tid]
         
         return detections
 
-    def _trigger_alarm_save(self, frame, owner_id, conf, w, h):
-        prefix = f"alarm_p{owner_id}" if owner_id else "alarm_unknown"
-        ts = int(time.time())
-        video_name = f"{prefix}_{ts}.mp4"
-        video_path = self.recorder.start_recording(video_name, post_record_sec=5, width=w, height=h)
-        
-        img_name = f"{prefix}_{ts}.jpg"
-        roi_path = self.recorder.save_snapshot(frame, img_name)
-        
-        if self.app:
-            threading.Thread(
-                target=self._save_alarm_to_db, 
-                args=(self.app, conf, video_path, roi_path)
-            ).start()
-        else:
-            logger.error("❌ App context is missing, cannot save alarm to DB")
+    def _update_cooldowns(self, current_time, persons):
+        current_pids = {p['id']: p['box'] for p in persons}
+        keys_to_remove = []
+        for key, record in self.active_cooldowns.items():
+            if current_time - record['time'] > self.alarm_cooldown:
+                keys_to_remove.append(key); continue
+            if isinstance(key, int) and key in current_pids:
+                box = current_pids[key]
+                record['pos'] = ((box[0]+box[2])/2, (box[1]+box[3])/2)
+        for k in keys_to_remove: del self.active_cooldowns[k]
+
+    def _is_in_cooldown(self, cx, cy):
+        for record in self.active_cooldowns.values():
+            rx, ry = record['pos']
+            if math.sqrt((cx-rx)**2 + (cy-ry)**2) < self.alarm_radius: return True
+        return False
 
     def _match_person_id(self, c_box, persons):
         c_cx, c_cy = (c_box[0]+c_box[2])/2, (c_box[1]+c_box[3])/2
-        min_dist = float('inf')
-        best_id = None
+        min_dist, best_id = float('inf'), None
         for p in persons:
             p_box = p['box']
             p_cx, p_cy = (p_box[0]+p_box[2])/2, (p_box[1]+p_box[3])/2
-            p_w = p_box[2] - p_box[0]
-            search_radius = max(p_w * 2.0, 100.0)
-            dist = math.sqrt((c_cx - p_cx)**2 + (c_cy - p_cy)**2)
-            if dist < search_radius and dist < min_dist:
-                min_dist = dist
-                best_id = p['id']
+            dist = math.sqrt((c_cx-p_cx)**2 + (c_cy-p_cy)**2)
+            if dist < (p_box[2]-p_box[0])*2.0 and dist < min_dist:
+                min_dist, best_id = dist, p['id']
         return best_id
 
-    def _save_alarm_to_db(self, app, confidence, video_path, roi_path):
-        try:
-            with app.app_context():
-                video_rel = "static/evidence/" + os.path.basename(video_path) if video_path else ""
-                roi_rel = "static/evidence/snapshots/" + os.path.basename(roi_path) if roi_path else ""
+    def _add_cooldown(self, owner_id, cx, cy, current_time):
+        key = owner_id if owner_id else f"static_{current_time}"
+        self.active_cooldowns[key] = {'pos': (cx, cy), 'time': current_time}
+
+    # 🚀 触发上报
+    def _trigger_alarm_save(self, frame, owner_id, conf):
+        """
+        🚀 报警核心：仅保存物理文件，并通知 Java 存储数据库
+        """
+        ts = int(time.time())
+        # 文件名前缀，包含摄像头ID和时间戳
+        prefix = f"alarm_cam{self.camera_id}_p{owner_id if owner_id else 'unk'}_{ts}"
+        
+        # 1. 保存截图到 snapshots 目录
+        img_name = f"{prefix}.jpg"
+        self.recorder.save_snapshot(frame, img_name)
+        
+        # 2. 开启录像（5秒后自动停止并转码）
+        video_name = f"{prefix}.mp4"
+        h, w = frame.shape[:2]
+        self.recorder.start_recording(video_name, post_record_sec=5, width=w, height=h)
+        
+        # 3. 异步通知 Java 后端
+        def notify_java_to_save_db():
+            # 延迟 1 秒发送，确保录像文件已经初始化创建
+            time.sleep(1)
+            
+            # 🚀 构造 Java 能够通过 Web 访问到的相对路径
+            # 假设你的 Flask 静态目录映射在 /static/
+            snapshot_url = f"/static/evidence/snapshots/{img_name}"
+            video_url = f"/static/evidence/{video_name}"
+
+            try:
+                java_alarm_url = "http://localhost:8080/api/alerts/report"
+                payload = {
+                    "deviceId": self.camera_id,      # 摄像头ID
+                    "type": "SMOKING",              # 报警类型
+                    "confidence": round(float(conf), 2), # 置信度
+                    "snapshotUrl": snapshot_url,     # 截图访问路径
+                    "videoUrl": video_url,           # 视频访问路径
+                    "personId": owner_id,            # 匹配到的人员ID（如果有）
+                    "description": f"摄像头{self.camera_id}检测到吸烟行为"
+                }
+                
+                # 发送 POST 请求给 Java
+                response = requests.post(java_alarm_url, json=payload, timeout=3)
+                
+                if response.status_code == 200:
+                    logger.info(f"🔥 [Alarm] Java 响应成功: 报警记录已由 Java 存库")
+                else:
+                    logger.error(f"❌ [Alarm] Java 响应异常: {response.status_code}")
                     
-                alarm = Alarms(
-                    camera_id=self.camera_id, 
-                    type='SMOKING', 
-                    confidence=confidence, 
-                    video_url=video_rel, 
-                    roi_url=roi_rel,
-                    audit_status=0 
-                )
-                db.session.add(alarm)
-                db.session.commit()
-                logger.info(f"💾 [DB] 报警记录已保存: ID {alarm.id}")
-        except Exception as e:
-            with app.app_context():
-                db.session.rollback()
-            logger.error(f"❌ DB Save Error: {e}")
+            except Exception as e:
+                logger.error(f"❌ [Alarm] 无法连接到 Java 报警接口: {e}")
+
+        # 放入后台线程，不阻塞识别主循环
+        threading.Thread(target=notify_java_to_save_db, daemon=True).start()
 
     def _draw_ui(self, frame, detections):
         for det in detections:
             x1, y1, x2, y2 = det['box']
-            label = det['label']
-            if label == 'person':
-                color = (255, 0, 0)
-                # 加上摄像头ID前缀
-                text = f"Cam{self.camera_id}-ID:{det['id']}"
-            else:
+            if det['label'] == 'person':
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                cv2.putText(frame, f"ID:{det['id']}", (x1, y1-10), 1, 1.2, (255,0,0), 2)
+            elif det['label'] == 'cigarette':
+                color = (0, 0, 255) if det.get('is_alarm') else (0, 255, 255)
+                text = "SMOKING!" if det.get('is_alarm') else "cig"
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(frame, text, (x1, y1-10), 1, 1.2, color, 2)
                 if det.get('is_alarm'):
-                    color = (0, 0, 255)
-                    text = "SMOKING!"
                     h, w = frame.shape[:2]
-                    cv2.rectangle(frame, (0,0), (w,h), (0,0,255), 5)
-                else:
-                    color = (0, 255, 255)
-                    text = "cig"
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, text, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    cv2.rectangle(frame, (0,0), (w,h), (0,0,255), 4)
         return frame
 
-    def get_latest_frame(self):
-        if self.output_frame is not None: 
-            return cv2.resize(self.output_frame, (640, 360))
-        if self.latest_frame is not None:
-            return cv2.resize(self.latest_frame, (640, 360))
-        return None
+    def _watchdog_thread(self):
+        while self.running:
+            if time.time() - self.last_read_time > 15.0:
+                self._update_db_status(0)
+                self.reconnect_requested = True
+            time.sleep(5)
 
-# ==========================================
-# StreamManager: 管理所有摄像头
-# ==========================================
+    def start(self):
+        with self.start_lock:
+            if self.running: return True
+            self.running = True
+            threading.Thread(target=self._reader_thread, daemon=True).start()
+            threading.Thread(target=self._processor_thread, daemon=True).start()
+            threading.Thread(target=self._watchdog_thread, daemon=True).start()
+            return True
+
+    def stop(self):
+        self.running = False
+        self._update_db_status(0)
+        with self.lock:
+            if self.cap: self.cap.release(); self.cap = None
+
+    def get_latest_frame(self):
+        with self.lock:
+            f = self.output_frame if self.output_frame is not None else self.latest_frame
+            return cv2.resize(f, (640, 360)) if f is not None else None
+
 class StreamManager:
     def __init__(self):
         self.stream_loaders = {}
-        self.app = None 
-        self.lock = threading.Lock() 
-        
-        # ✅ 新增：全局 AI 开关 (默认开启)
+        self.lock = threading.Lock()
         self.global_ai_enabled = True
 
+    # 🚀 补回这个缺失的方法，供 app/__init__.py 调用
     def init_app(self, app):
         self.app = app
+        logger.info("📡 [Manager] 已成功关联 Flask 应用上下文")
 
     def add_camera(self, cid, url):
-        with self.lock: 
-            if cid in self.stream_loaders:
-                existing = self.stream_loaders[cid]
-                if existing.rtsp_url == url and existing.running:
-                    # 即使已经在运行，也要同步一下当前的全局 AI 状态
-                    existing.set_ai_status(self.global_ai_enabled)
-                    return True
-                logger.info(f"🔄 [Manager] 替换旧实例: Cam {cid}")
-                existing.stop()
-                del self.stream_loaders[cid] 
-            
-            l = StreamLoader(cid, url, self.app)
-            
-            # ✅ 启动时应用全局 AI 状态
+        with self.lock:
+            if cid in self.stream_loaders: self.stream_loaders[cid].stop()
+            l = StreamLoader(cid, url)
             l.set_ai_status(self.global_ai_enabled)
-            
-            if l.start(): 
+            if l.start():
                 self.stream_loaders[cid] = l
                 return True
             return False
+
+    def update_active_streams(self, active_devices_dict):
+        with self.lock:
+            active_ids = set(active_devices_dict.keys())
+            current_ids = set(self.stream_loaders.keys())
+            for cid in (current_ids - active_ids):
+                self.stream_loaders[cid].stop()
+                del self.stream_loaders[cid]
+            for cid in (active_ids - current_ids):
+                self.add_camera(cid, active_devices_dict[cid])
 
     def get_latest_frame(self, cid):
         l = self.stream_loaders.get(cid)
         return l.get_latest_frame() if l else None
 
-    def remove_camera(self, cid):
-        with self.lock: 
-            if cid in self.stream_loaders:
-                logger.info(f"🗑️ [Manager] Removing Camera ID: {cid}")
-                loader = self.stream_loaders[cid]
-                loader.stop() 
-                del self.stream_loaders[cid] 
-            else:
-                logger.warning(f"⚠️ [Manager] 试图删除不存在的设备: {cid}")
-
-    # ✅ 修改：启动前检查 enabled 字段
-    def start_camera_task(self, device_id):
-        from app.models.devices import Devices 
-        if not self.app: return False
-        
-        with self.app.app_context():
-            device = Devices.query.get(device_id)
-            if not device: return False
-            
-            # 🛑 核心拦截：如果设备被禁用了，拒绝启动
-            if device.enabled == False: # 显式检查 False
-                logger.warning(f"🚫 [Manager] Cam {device_id} 已被停用，拒绝启动")
-                return False
-
-            if device.rtsp_url:
-                return self.add_camera(device.id, device.rtsp_url)
-        return False
-
-    # ✅ 新增：切换设备的“启用/停用”状态 (写入数据库)
-    def toggle_device_enable(self, device_id, enable):
-        from app.models.devices import Devices
-        if not self.app: return False
-        
-        with self.app.app_context():
-            device = Devices.query.get(device_id)
-            if device:
-                device.enabled = enable
-                db.session.commit()
-                
-                if enable:
-                    # 如果启用，尝试启动流
-                    return self.start_camera_task(device_id)
-                else:
-                    # 如果停用，强制停止流
-                    self.remove_camera(device_id)
-                    # 强制更新状态为离线
-                    device.status = 0
-                    db.session.commit()
-                    return True
-        return False
-
-    # ✅ 新增：设置全局 AI 开关
     def set_global_ai(self, enabled):
         self.global_ai_enabled = enabled
-        logger.info(f"🌍 [System] 全局 AI 设定为: {enabled}")
-        
-        # 遍历所有正在运行的加载器，实时更新它们的状态
-        with self.lock:
-            for loader in self.stream_loaders.values():
-                loader.set_ai_status(enabled)
-        return True
+        for loader in self.stream_loaders.values(): loader.set_ai_status(enabled)
 
+import builtins
 stream_manager = StreamManager()
+builtins.GLOBAL_STREAM_MANAGER = stream_manager
+logger.info("🛠️ [Global] StreamManager 已注册到全局内置空间")
