@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import deviceApi from '../api/device' // 🚀 确保此文件已定义 getStatusOnly 方法
 import { ElMessage } from 'element-plus'
+import type { StringDecoder } from 'string_decoder'
 
 // 定义设备接口
 export interface DeviceVO {
@@ -10,10 +11,12 @@ export interface DeviceVO {
   rtspUrl: string 
   status: number    // 1:在线, 0:离线
   enabled: boolean  // 🚀 核心：启停状态
-  created_at: string
-  isRetrying?: boolean // UI状态：是否正在重连
+  created_at: StringDecoder
   failTip?: string     // UI状态：错误提示
-  isVideoError?: boolean // UI状态：视频加载错误
+  // 🚀 必须添加以下字段来支持 UI 状态切换
+  isLoading?: boolean;     // 控制蓝色加载遮罩和转圈
+  isVideoError?: boolean;  // 控制错误提示显示
+  isRetrying?: boolean;    // 控制“立即唤醒”按钮的锁定状态
 }
 
 export const useDeviceStore = defineStore('device', () => {
