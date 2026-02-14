@@ -35,7 +35,6 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         "/api/auth/login",    // 放行登录
                         "/api/internal/**",
-                        "/api/monitor/devices",
                         "/api/monitor/stream/**", // 放行视频流相关(如果有)
                         "/api/internal/**",   // 放行 Python 内部调用的接口(建议加 IP 白名单，这里暂且放行)
                                 // 🚀 必须加上这一行，允许 Python 不带 Token 访问

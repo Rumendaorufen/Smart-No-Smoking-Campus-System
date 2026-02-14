@@ -52,8 +52,21 @@ public class DeviceController {
      * 2. 添加设备
      */
     @PostMapping("/devices")
-    public Result add(@RequestBody Device device, @RequestAttribute(value = "uid", required = false) Long uid) {
-        if (uid == null || !userService.isAdmin(uid)) return Result.error(403, "无权操作");
+    public Result add(@RequestBody Device device,
+                      @RequestAttribute(value = "uid", required = false) Object uidObj) {
+        // 1. 手动判断属性是否存在，避免 ServletRequestBindingException
+        if (uidObj == null) {
+            return Result.error(401, "登录凭证缺失，请重新登录");
+        }
+
+        // 2. 安全转换为 Long (Hutool 解析出的可能是 Integer)
+        Long uid = Long.valueOf(uidObj.toString());
+
+        // 3. 权限校验
+        if (!userService.isAdmin(uid)) {
+            return Result.error(403, "权限不足：只有管理员可添加设备");
+        }
+
         try {
             deviceService.addDevice(device);
             return Result.success(Map.of("id", device.getId()));
