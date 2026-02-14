@@ -9,6 +9,7 @@ import org.example.webback.mapper.AlarmMapper;
 import org.example.webback.mapper.DeviceMapper;
 import org.example.webback.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
@@ -26,6 +27,9 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
     private DeviceMapper deviceMapper;
     @Autowired
     private UserMapper userMapper;
+
+    @Value("${app.python-static-path}") // 🚀 注入刚才配置的路径
+    private String pythonStaticPath;
 
     private void fillExtraInfo(IPage<Alarm> page) {
         List<Alarm> records = page.getRecords();
@@ -104,21 +108,39 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
     public void removeAlarmWithFile(Long id) {
         Alarm alarm = this.getById(id);
         if (alarm == null) return;
+
+        // 1. 先删除物理文件
         deletePhysicalFile(alarm.getRoiUrl());
         deletePhysicalFile(alarm.getVideoUrl());
+
+        // 2. 再删除数据库记录
         this.removeById(id);
+        System.out.println("✅ 记录 ID:" + id + " 及其关联物理文件已清理");
     }
 
-    private void deletePhysicalFile(String relPath) {
-        if (!StringUtils.hasText(relPath)) return;
+    private void deletePhysicalFile(String webPath) {
+        if (!StringUtils.hasText(webPath)) return;
+
         try {
-            String projectDir = System.getProperty("user.dir");
-            String safePath = relPath.startsWith("/") ? relPath.substring(1) : relPath;
-            File file = new File(projectDir, safePath);
-            if (file.exists()) file.delete();
+            // webPath 示例: "/static/evidence/snapshots/alarm_xxx.jpg"
+            // 我们需要去掉开头的 "/" 并拼接到 Python 的 app 目录下
+            String relativePath = webPath.startsWith("/") ? webPath.substring(1) : webPath;
+
+            // 构造绝对路径
+            File file = new File(pythonStaticPath, relativePath);
+
+            if (file.exists()) {
+                boolean success = file.delete();
+                if (success) {
+                    System.out.println("🗑️ 已删除物理文件: " + file.getAbsolutePath());
+                } else {
+                    System.err.println("⚠️ 文件存在但删除失败(可能被占用): " + file.getAbsolutePath());
+                }
+            } else {
+                System.err.println("❓ 未找到物理文件，跳过删除: " + file.getAbsolutePath());
+            }
         } catch (Exception e) {
-            // ✅ 修复点：改用简单的标准错误打印，避免不兼容的 log 库调用
-            System.err.println("文件删除失败: " + e.getMessage());
+            System.err.println("❌ 物理删除异常: " + e.getMessage());
         }
     }
 

@@ -223,9 +223,33 @@ class StreamLoader:
     def _draw_ui(self, frame, detections):
         for det in detections:
             x1, y1, x2, y2 = det['box']
-            color = (255, 0, 0) if det['label'] == 'person' else (0, 255, 255)
-            if det.get('is_alarm'): color = (0, 0, 255)
+            label = det['label']
+            
+            # 设置颜色：人用蓝色，吸烟用红色，烟头用黄色
+            if label == 'person':
+                color = (255, 0, 0)
+                # 🚀 核心修改：将设备 ID (camera_id) 与人物追踪 ID 拼接
+                # 格式示例：Cam40-P1
+                text = f"Cam{self.camera_id}-P{det.get('id', 'unk')}"
+            elif label == 'cigarette':
+                if det.get('is_alarm'):
+                    color = (0, 0, 255)
+                    text = "SMOKING!"
+                    # 报警时画一个全屏红框闪烁效果（可选）
+                    h, w = frame.shape[:2]
+                    cv2.rectangle(frame, (0,0), (w,h), (0,0,255), 5)
+                else:
+                    color = (0, 255, 255)
+                    text = "cig"
+            else:
+                color = (0, 255, 0)
+                text = label
+
+            # 绘制检测框
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            # 在框上方绘制 包含设备ID 的标签文本
+            cv2.putText(frame, text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
         return frame
 
     def _watchdog_thread(self):

@@ -32,3 +32,6 @@ mybatis-plus:
   global-config:
     db-config:
       id-type: auto # 主键自增
+
+app:
+  python-static-path: D:/engineering/Smart No-Smoking Campus System/web-flask/app # 🚀 修改为你 Python 项目的 app 目录绝对路径
