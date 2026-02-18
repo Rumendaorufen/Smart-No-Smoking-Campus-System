@@ -58,7 +58,6 @@ class StreamLoader:
         """同步状态至 Java 后端"""
         try:
             java_sync_url = "http://localhost:8080/api/monitor/devices/sync-status"
-            # 这里的 timeout 必须短，防止阻塞主循环
             requests.post(java_sync_url, json={"id": self.camera_id, "status": status}, timeout=0.5)
         except: 
             pass
@@ -103,7 +102,6 @@ class StreamLoader:
                         self.latest_frame = frame
                         self.last_read_time = time.time()
                 else:
-                    # 🚀 读帧失败，立即标记离线
                     logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失")
                     self._update_db_status(0)
                     self.reconnect_requested = True
@@ -114,7 +112,7 @@ class StreamLoader:
                 break
 
     def _processor_thread(self):
-        """AI 处理线程"""
+        """AI 处理线程 (已修正顺序以支持带框录像)"""
         while self.running:
             frame_to_process = None
             ai_on = True
@@ -126,10 +124,9 @@ class StreamLoader:
             if frame_to_process is None:
                 time.sleep(0.1); continue
 
-            self.recorder.add_frame(frame_to_process)
             detections = []
             
-            # 根据开关动态决定是否跑推理
+            # 1. 跑推理逻辑
             if ai_on:
                 try:
                     detections = self.detector.detect(frame_to_process)
@@ -137,17 +134,20 @@ class StreamLoader:
                 except Exception as e:
                     logger.error(f"AI Error: {e}")
 
-            # 渲染画面
-            final_view = self._draw_ui(frame_to_process, detections)
+            # 2. 渲染画面：把框画在图上
+            frame_to_process = self._draw_ui(frame_to_process, detections)
+
+            # 3. 🚀 将带框的帧存入录像机缓冲区
+            self.recorder.add_frame(frame_to_process)
+
+            # 4. 更新输出预览
             with self.lock:
-                self.output_frame = final_view
+                self.output_frame = frame_to_process
             
-            # 🚀 必须确保每一轮循环都调用这个，否则录像永远不会停，也就永远打不开
             self.recorder.process_recording()
             time.sleep(0.01)
 
     def _handle_alarm_logic(self, frame, detections):
-        # (保持原有的报警逻辑代码不变...)
         current_time = time.time()
         persons = [d for d in detections if d['label'] == 'person']
         cigarettes = [d for d in detections if d['label'] == 'cigarette']
@@ -164,7 +164,11 @@ class StreamLoader:
                     if not self._is_in_cooldown(c_cx, c_cy):
                         event.is_confirmed = True
                         owner_id = self._match_person_id(cbox, persons)
-                        self._trigger_alarm_save(frame, owner_id, cig['conf'])
+                        
+                        # 🚀 录像带框的关键点：在保存快照前，先画个带框的图
+                        evidence_frame = self._draw_ui(frame.copy(), detections)
+                        self._trigger_alarm_save(evidence_frame, owner_id, cig['conf'])
+                        
                         self._add_cooldown(owner_id, c_cx, c_cy, current_time)
             else: cig['is_alarm'] = False
         expired = [tid for tid, evt in self.smoke_events.items() if current_time - evt.last_seen_time > self.lost_timeout]
@@ -205,7 +209,7 @@ class StreamLoader:
 
     def _trigger_alarm_save(self, frame, owner_id, conf):
         ts = int(time.time())
-        img_name = f"alarm_cam{self.camera_id}_p{owner_id or 'unk'}_{ts}.jpg"
+        img_name = f"alarm_cam{self.camera_id}__p{owner_id or 'unk'}_{ts}.jpg"
         self.recorder.save_snapshot(frame, img_name)
         video_name = img_name.replace('.jpg', '.mp4')
         h, w = frame.shape[:2]
@@ -224,18 +228,13 @@ class StreamLoader:
         for det in detections:
             x1, y1, x2, y2 = det['box']
             label = det['label']
-            
-            # 设置颜色：人用蓝色，吸烟用红色，烟头用黄色
             if label == 'person':
                 color = (255, 0, 0)
-                # 🚀 核心修改：将设备 ID (camera_id) 与人物追踪 ID 拼接
-                # 格式示例：Cam40-P1
                 text = f"Cam{self.camera_id}-P{det.get('id', 'unk')}"
             elif label == 'cigarette':
                 if det.get('is_alarm'):
                     color = (0, 0, 255)
                     text = "SMOKING!"
-                    # 报警时画一个全屏红框闪烁效果（可选）
                     h, w = frame.shape[:2]
                     cv2.rectangle(frame, (0,0), (w,h), (0,0,255), 5)
                 else:
@@ -245,17 +244,12 @@ class StreamLoader:
                 color = (0, 255, 0)
                 text = label
 
-            # 绘制检测框
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            # 在框上方绘制 包含设备ID 的标签文本
             cv2.putText(frame, text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            
         return frame
 
     def _watchdog_thread(self):
-        """看门狗：每一秒巡检一次状态"""
         while self.running:
-            # 🚀 5 秒不更新则判定掉线
             if time.time() - self.last_read_time > 5.0:
                 if not self.reconnect_requested:
                     logger.warning(f"🚨 Cam {self.camera_id} 超时卡死，标记离线")
@@ -275,7 +269,6 @@ class StreamLoader:
     def stop(self):
         if not self.running: return
         self.running = False
-        # 🚀 优先标记离线，再关流
         self._update_db_status(0)
         if self.cap: self.cap.release()
         logger.info(f"💀 Cam {self.camera_id} 资源释放")
@@ -301,7 +294,6 @@ class StreamManager:
             if cid in self.stream_loaders:
                 old = self.stream_loaders[cid]
                 if old.running and old.latest_frame is not None and old.rtsp_url == url:
-                    # 确保同步最新的全局 AI 开关
                     old.set_ai_status(self.global_ai_enabled)
                     return True
                 old.stop()
@@ -316,11 +308,9 @@ class StreamManager:
             return False
 
     def set_global_ai(self, enabled: bool):
-        """🚀 修复 500 错误的重点：添加线程安全的全局切换"""
         with self.lock:
             self.global_ai_enabled = enabled
             logger.info(f"🌍 全局 AI 开关设定为: {enabled}")
-            # 通知所有正在运行的加载器
             for loader in self.stream_loaders.values():
                 loader.set_ai_status(enabled)
         return True
