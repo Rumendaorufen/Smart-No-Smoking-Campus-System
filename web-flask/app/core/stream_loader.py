@@ -55,24 +55,36 @@ class StreamLoader:
         logger.info(f"🤖 Cam {self.camera_id} AI 状态切换 -> {enabled}")
 
     def _update_db_status(self, status):
-        """同步状态至 Java 后端"""
+        """同步状态至 Java 后端 (增加严谨的超时和异常捕获)"""
         try:
             java_sync_url = "http://localhost:8080/api/monitor/devices/sync-status"
-            requests.post(java_sync_url, json={"id": self.camera_id, "status": status}, timeout=0.5)
-        except: 
-            pass
+            # 🚀 必须设置 timeout，且捕获所有异常
+            requests.post(
+                java_sync_url, 
+                json={"id": self.camera_id, "status": status}, 
+                timeout=1.0  # 给 1 秒足够了
+            )
+        except Exception as e: 
+            # 仅仅记录，不要抛出，防止崩掉调用它的线程
+            logger.debug(f"通知 Java 失败(正常现象): {e}")
 
     def _connect(self):
-        """🚀 秒开连接配置"""
+        """🚀 增强稳定性连接配置"""
         try:
-            if self.cap: self.cap.release()
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000|probesize;32768|analyzeduration;0"
+            if self.cap: 
+                self.cap.release()
+            
+            # 🚀 关键修复：禁用 FFmpeg 内部线程，由 Python 线程全权负责
+            # 添加 threads=1 解决 pthread_frame.c 断言失败问题
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000|threads;1"
             
             logger.info(f"🛰️ 正在点火: {self.rtsp_url.split('@')[-1]}")
             self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             
+            # 这里的设置也很重要
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
             if self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 ret, frame = self.cap.read()
                 if ret and frame is not None:
                     with self.lock:
@@ -86,8 +98,10 @@ class StreamLoader:
             return False
 
     def _reader_thread(self):
-        """视频读取线程：具备秒级断线感知"""
         while self.running:
+            # 🚀 增加判断：如果已经被外部 stop 了，直接退出
+            if not self.running: break
+            
             if not self.cap or not self.cap.isOpened() or self.reconnect_requested:
                 if self._connect(): 
                     self.reconnect_requested = False
@@ -96,19 +110,21 @@ class StreamLoader:
                     time.sleep(2); continue
 
             try:
-                ret, frame = self.cap.read()
-                if ret and frame is not None:
-                    with self.lock:
-                        self.latest_frame = frame
-                        self.last_read_time = time.time()
-                else:
-                    logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失")
-                    self._update_db_status(0)
-                    self.reconnect_requested = True
-                    with self.lock: self.latest_frame = None
-                    time.sleep(1)
-            except:
-                self._update_db_status(0)
+                # 再次确认
+                if self.cap and self.cap.isOpened():
+                    ret, frame = self.cap.read()
+                    if ret and frame is not None:
+                        with self.lock:
+                            self.latest_frame = frame
+                            self.last_read_time = time.time()
+                    else:
+                        if self.running: # 只有在预期运行中丢失信号才报警
+                            logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失")
+                            self._update_db_status(0)
+                            self.reconnect_requested = True
+                        time.sleep(1)
+            except Exception as e:
+                logger.debug(f"读取线程退出捕获: {e}")
                 break
 
     def _processor_thread(self):
@@ -268,10 +284,29 @@ class StreamLoader:
 
     def stop(self):
         if not self.running: return
+        
+        # 1. 先标记停止，让 _reader_thread 的 while 循环退出
         self.running = False
-        self._update_db_status(0)
-        if self.cap: self.cap.release()
-        logger.info(f"💀 Cam {self.camera_id} 资源释放")
+        
+        # 2. 立即异步通知 Java（不阻塞主进程）
+        threading.Thread(target=self._update_db_status, args=(0,), daemon=True).start()
+        
+        # 3. 🚀 给 FFmpeg 解码器一点缓冲时间（0.2秒），让它先停下来
+        time.sleep(0.2)
+        
+        try:
+            if self.cap:
+                # 在 release 之前尝试清除缓冲区
+                self.cap.release()
+                self.cap = None
+        except Exception as e:
+            logger.error(f"⚠️ OpenCV 资源释放异常: {e}")
+
+        with self.lock:
+            self.latest_frame = None
+            self.output_frame = None
+        
+        logger.info(f"💀 Cam {self.camera_id} 资源清理完成")
 
     def get_latest_frame(self):
         with self.lock:
