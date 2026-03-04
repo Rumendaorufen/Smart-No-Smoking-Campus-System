@@ -229,6 +229,7 @@ const alarmState = ref<Record<number, boolean>>({})
 
 let stompClient: any = null
 let socket: any = null
+let statusPollingTimer: any = null
 
 const initWebSocket = () => {
   socket = new SockJS(`${JAVA_BASE}/ws`)
@@ -257,12 +258,22 @@ const fetchSystemStatus = async () => {
     const res = await axios.get(`${JAVA_BASE}/api/system/status`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     })
+    
     if (res.data.code === 200) {
-      // 🚀 这里的 totalStreams 改为根据前端列表的 enabled 且 status 为 1 过滤
-      systemStatus.totalStreams = deviceList.value.filter(d => d.enabled && d.status === 1).length
-      systemStatus.globalAi = res.data.data.business?.globalAi || false
+      const data = res.data.data
+      
+      // 🚀 核心修复：根据后端 SystemMonitorService 的平铺结构读取
+      // 后端存的是 "global_ai"，所以这里必须用 data.global_ai
+      systemStatus.globalAi = data.global_ai ?? false
+      
+      // 更新在线推流数（基于设备列表计算）
+      if (deviceList.value) {
+        systemStatus.totalStreams = deviceList.value.filter(d => d.enabled && d.status === 1).length
+      }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error("同步系统状态失败", e)
+  }
 }
 
 const deviceStore = useDeviceStore()
@@ -327,25 +338,41 @@ watch(deviceList, (newList) => {
 }, { deep: true })
 
 onMounted(() => {
+  // 1. 时间显示逻辑 (保持不变)
   const updateTime = () => {
     const now = new Date()
     currentTime.value = now.toLocaleTimeString('zh-CN', { hour12: false })
     currentDate.value = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })
   }
-  updateTime(); setInterval(updateTime, 1000)
+  updateTime()
+  setInterval(updateTime, 1000)
   
-  // 🚀 初始化全量数据，后续 startPolling 会改为 status-only 极简轮询
+  // 2. 设备列表轮询 (保持不变)
   deviceStore.fetchDevices().then(() => {
-     deviceStore.startPolling()
+    deviceStore.startPolling()
   })
   
+  // 3. WebSocket 初始化 (保持不变)
   initWebSocket()
-  fetchSystemStatus(); setInterval(fetchSystemStatus, 30000) // 拉长系统状态检查频率
+
+  // 4. 🚀 关键：同步系统状态（AI开关）
+  fetchSystemStatus() // 立即执行一次
+  // 每 3 秒同步一次，确保和 System.vue 的体感一致
+  statusPollingTimer = setInterval(fetchSystemStatus, 3000) 
 })
 
 onUnmounted(() => {
+  // 停止设备轮询
   deviceStore.stopPolling()
+  
+  // 断开 WebSocket
   if (stompClient) stompClient.disconnect(() => {})
+
+  // 🚀 核心修复：必须清理系统状态轮询，否则切换页面后还会报错或浪费资源
+  if (statusPollingTimer) {
+    clearInterval(statusPollingTimer)
+    statusPollingTimer = null
+  }
 })
 
 const viewFullScreen = (id: number) => {
