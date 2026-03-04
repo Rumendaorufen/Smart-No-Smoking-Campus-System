@@ -139,6 +139,21 @@ graph TD
 * **智能握手**：针对移动端/低功耗摄像头，设计了 **"UDP唤醒 -> 重试 -> TCP保底"** 的连接策略。
 * **僵尸线程查杀**：基于锁机制的资源释放策略，确保删除设备后立即物理断开连接，防止后台资源泄露。
 
+### 5. 报警仲裁与档案管理
+
+* **Human-in-the-Loop 人机回环**：引入人工仲裁机制，对AI报警结果进行二次确认，确保数据准确性。
+* **状态机管理**：实现报警记录的完整生命周期管理（待审核 → 已确认 → 误报 → 忽略）。
+* **分级存储策略**：
+  - 已确认违规：永久保留作为证据
+  - 误报记录：保留30天用于模型训练，然后自动清理
+* **快捷审核界面**：支持键盘快捷键操作，实现极速审核流程。
+
+### 6. 模型技术演进
+
+* **架构升级**：从 "Pose + 分类器" 升级为 "端到端双模型协同检测"。
+* **数据增强**：4000+ 训练样本，3:1 正负样本比例，显著提升抗干扰能力。
+* **硬件加速**：从 CPU 推理迁移到 GPU 加速，延迟从 80ms+ 降至 ~10ms。
+
 ---
 
 ## 📂 项目结构
@@ -146,9 +161,18 @@ graph TD
 ```
 Smart No-Smoking Campus System/
 ├── report/                     # 项目文档
+├── development log/            # 开发日志与技术文档
+│   ├── 开发计划.md             # 项目开发计划
+│   ├── 抽烟监测优化.md         # 技术优化报告
+│   ├── 仲裁于抽烟记录设计文档.md # 报警仲裁系统设计
+│   └── 修改模型文档.md         # 模型重构日志
 ├── web-flask/                  # 后端工程
 │   ├── app/
 │   │   ├── api/                # RESTful API
+│   │   │   ├── auth.py         # 认证接口
+│   │   │   ├── device.py       # 设备管理
+│   │   │   ├── monitor.py      # 监控接口
+│   │   │   └── user.py         # 用户管理
 │   │   ├── core/               # AI 核心算法
 │   │   │   ├── detector.py     # YOLO 级联检测器 (单例/Batch/FP16)
 │   │   │   ├── stream_loader.py# 视频流管理 (防僵尸线程)
@@ -160,10 +184,59 @@ Smart No-Smoking Campus System/
 └── web-vue/                    # 前端工程
     ├── src/
     │   ├── api/                # Axios 请求封装
-    │   ├── views/              # Vue 页面 (Monitor/DeviceManage)
-    │   └── stores/             # Pinia 状态管理
+    │   │   ├── auth.ts         # 认证 API
+    │   │   ├── device.ts       # 设备管理 API
+    │   │   ├── user.ts         # 用户管理 API
+    │   │   └── alert.ts        # 报警管理 API
+    │   ├── router/             # 路由配置
+    │   ├── stores/             # Pinia 状态管理
+    │   ├── utils/              # 工具函数
+    │   ├── views/              # Vue 页面
+    │   │   ├── Login.vue       # 登录页面
+    │   │   ├── Monitor.vue     # 监控墙
+    │   │   ├── DeviceManage.vue # 设备管理
+    │   │   ├── UserManage.vue  # 用户管理
+    │   │   ├── AuditConsole.vue # 报警仲裁台
+    │   │   ├── AlarmArchive.vue # 违规历史档案
+    │   │   └── SystemControl.vue # 系统控制
+    │   ├── App.vue             # 根组件
+    │   └── main.ts             # 应用入口
 
 ```
+
+```
+
+### 核心文件说明
+
+#### 后端核心文件
+- **app/api/auth.py**: 认证相关接口，包括登录、登出、获取用户信息
+- **app/api/device.py**: 设备管理接口，包括添加、删除、修改设备
+- **app/api/monitor.py**: 监控相关接口，包括获取设备列表、测试流状态
+- **app/api/user.py**: 用户管理接口，包括获取用户列表、添加、删除用户
+- **app/core/detector.py**: YOLO 级联检测器，实现双模型协同检测
+- **app/core/stream_loader.py**: 视频流管理，实现智能握手和防僵尸线程
+- **app/models/**: 数据库模型，包括用户、设备、报警记录等
+- **app/sockets/**: WebSocket 事件处理，实现实时报警推送
+- **run.py**: 应用启动入口，初始化 Flask 应用和各种服务
+- **config.py**: 全局配置，包括数据库连接、模型路径等
+
+#### 前端核心文件
+- **src/views/Monitor.vue**: 监控墙主页面，显示视频流和设备信息
+- **src/views/Login.vue**: 用户登录页面
+- **src/views/DeviceManage.vue**: 设备管理页面
+- **src/views/UserManage.vue**: 用户管理页面
+- **src/views/AuditConsole.vue**: 报警仲裁台，人工审核 AI 报警结果
+- **src/views/AlarmArchive.vue**: 违规历史档案，管理已确认的违规记录
+- **src/views/SystemControl.vue**: 系统控制页面
+- **src/api/auth.ts**: 认证相关 API 接口封装
+- **src/api/device.ts**: 设备管理 API 接口封装
+- **src/api/user.ts**: 用户管理 API 接口封装
+- **src/api/alert.ts**: 报警管理 API 接口封装
+- **src/router/index.ts**: 路由配置，定义页面导航规则和权限控制
+- **src/stores/device.ts**: 设备状态管理，使用 Pinia 存储
+- **src/utils/request.ts**: 请求工具封装，处理 API 调用
+- **src/main.ts**: Vue 应用初始化
+- **src/App.vue**: 根组件，定义路由和全局布局
 
 ---
 
@@ -219,21 +292,24 @@ npm run dev
 * **架构重构**：引入级联检测（Cascade Detection）架构，大幅提升小目标识别率。
 * **性能飞跃**：实现 Batch 推理与 FP16 半精度加速，多路并发显存占用降低 60%，延迟 <300ms。
 * **稳定性升级**：
-* 修复了删除设备后后台"僵尸线程"占用的问题。
-* 优化 RTSP 连接策略，增加断流自动熔断与智能唤醒机制。
-* 实现全局单例模型加载，彻底解决显存溢出崩溃问题。
-
-
-* **体验优化**：新增惯性追踪算法，消除检测框闪烁现象。
+  - 修复了删除设备后后台"僵尸线程"占用的问题
+  - 优化 RTSP 连接策略，增加断流自动熔断与智能唤醒机制
+  - 实现全局单例模型加载，彻底解决显存溢出崩溃问题
+* **体验优化**：新增惯性追踪算法，消除检测框闪烁现象
+* **报警仲裁系统**：实现 Human-in-the-Loop 人机回环机制，人工审核 AI 报警结果
+* **档案管理**：实现报警记录的完整生命周期管理和分级存储策略
 
 ### v3.2 (2026-01-14)
 
-* **用户权限**：完善 JWT 认证与多级权限控制。
-* **API 扩展**：分离设备管理与监控逻辑。
+* **用户权限**：完善 JWT 认证与多级权限控制
+* **API 扩展**：分离设备管理与监控逻辑
+* **前端页面**：新增用户管理、报警仲裁台、违规历史档案等页面
 
 ### v3.1 (2026-01-10)
 
-* **算法迁移**：全面迁移至 YOLOv8，弃用旧版 Pose 方案，提升抗遮挡能力。
+* **算法迁移**：全面迁移至 YOLOv8，弃用旧版 Pose 方案，提升抗遮挡能力
+* **硬件加速**：从 CPU 推理迁移到 GPU 加速，延迟从 80ms+ 降至 ~10ms
+* **数据增强**：4000+ 训练样本，3:1 正负样本比例，显著提升抗干扰能力
 
 ---
 
