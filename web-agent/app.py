@@ -28,13 +28,20 @@ def health():
 def chat():
     body = request.get_json(silent=True) or {}
     message = str(body.get("message", "")).strip()
-    conversation_id = str(body.get("conversationId", "")).strip() or None
+    # 获取 conversationId
+    conversation_id = str(body.get("conversationId", "")).strip()
 
+    # 🚀 1. 严格校验：消息和会话ID都不能缺
     if not message:
         return jsonify({"code": 400, "msg": "message is required", "data": None}), 400
+    
+    if not conversation_id:
+        return jsonify({"code": 400, "msg": "conversationId is required", "data": None}), 400
 
     try:
-        result = agent_service.ask(message)
+        # 🚀 2. 正确调用：传入 conversation_id
+        result = agent_service.ask(message, conversation_id)
+        
         return jsonify(
             {
                 "code": 200,
@@ -46,6 +53,9 @@ def chat():
             }
         )
     except Exception as exc:
+        # 打印一下具体的错误栈到控制台，方便后续排查
+        import traceback
+        traceback.print_exc()
         return jsonify({"code": 500, "msg": str(exc), "data": None}), 500
 
 
