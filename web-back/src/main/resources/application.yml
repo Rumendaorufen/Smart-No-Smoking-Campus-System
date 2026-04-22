@@ -33,5 +33,9 @@ mybatis-plus:
     db-config:
       id-type: auto # 主键自增
 
+ai:
+  agent:
+    url: "http://127.0.0.1:5050/api/agent/chat" # 确保和你 Python app.py 的端口一致
+
 app:
   python-static-path: D:/engineering/Smart No-Smoking Campus System/web-flask/app # 🚀 修改为你 Python 项目的 app 目录绝对路径

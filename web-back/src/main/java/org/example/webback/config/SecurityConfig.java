@@ -32,6 +32,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // ✅ 1. 放行登录
                         .requestMatchers("/api/auth/login").permitAll()
+                        // 🚀 核心：将 AI 相关的所有接口全部放行！
+//                        .requestMatchers("/api/ai/**").permitAll()
                         // ✅ 2. 放行系统监控相关 (解决 Monitor.vue 的 401)
                         .requestMatchers("/api/system/status", "/api/system/**").permitAll()
                         // ✅ 3. 放行设备管理接口 (解决 Python 拉取列表的 401 和 Vue 404)
