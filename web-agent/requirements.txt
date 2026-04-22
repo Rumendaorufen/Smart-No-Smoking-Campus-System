@@ -1,0 +1,7 @@
+Flask>=3.0,<4.0
+python-dotenv>=1.0,<2.0
+langchain>=0.3,<0.4
+langchain-community>=0.3,<0.4
+langchain-openai>=0.3,<0.4
+SQLAlchemy>=2.0,<3.0
+PyMySQL>=1.1,<2.0

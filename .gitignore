@@ -105,3 +105,8 @@ web-flask/static/evidence/*.mp4
 web-flask/static/snapshots/*.jpg
 web-flask/static/evidence/*.avi
 web-flask/static/snapshots/*.png
+
+
+#web-agent/.env --- IGNORE ---
+web-agent/.env/
+web-agent/env/
