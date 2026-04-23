@@ -10,6 +10,8 @@ from langchain_community.chat_message_histories import SQLChatMessageHistory
 from config import Settings
 from db_toolkit import build_sql_database
 from prompt import build_system_prompt
+from sqlalchemy import create_engine
+from langchain_community.utilities.sql_database import SQLDatabase
 
 class AgentService:
     def __init__(self, settings: Settings):
@@ -17,11 +19,20 @@ class AgentService:
         self._agent_executor = None
         self._lock = Lock()
 
+        # 🚀 核心修复 1：创建一个全局复用的数据库引擎，严格控制连接数
+        # pool_size=2 保证常规连接数为 2，max_overflow=1 保证最大并发不超过 3，完美躲过 MySQL 的 5 个限制
+        self._engine = create_engine(
+            self.settings.db_uri,
+            pool_size=2,
+            max_overflow=1,
+            pool_recycle=3600
+        )
+
     # 🚀 修复之前的 AttributeError
     def _get_history(self, conversation_id: str):
         return SQLChatMessageHistory(
             session_id=conversation_id,
-            connection=self.settings.db_uri,
+            connection=self._engine,
             table_name="ai_chat_history"
         )
 
@@ -114,7 +125,14 @@ class AgentService:
 
     def _build_agent_executor(self):
         llm = self._build_llm()
-        db = build_sql_database(self.settings)
+        # db = build_sql_database(self.settings)
+        db = SQLDatabase(
+            engine=self._engine,
+            include_tables=self.settings.include_tables,
+            view_support=True,
+            sample_rows_in_table_info=2,
+            lazy_table_reflection=True,
+        )
         # toolkit = SQLDatabaseToolkit(db=db, llm=llm)
         # 🚀 1. 核心修复：创建一个局部的自定义 Toolkit 类
         # 通过继承原生的 SQLDatabaseToolkit，重写 get_tools 方法来强行拦截
