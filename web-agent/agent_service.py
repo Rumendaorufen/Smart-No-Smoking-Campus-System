@@ -28,7 +28,23 @@ class AgentService:
     def ask_stream(self, message: str, conversation_id: str):
         executor = self._get_agent_executor()
         history = self._get_history(conversation_id)
-        enriched_input = f"### 问题 ###\n{message}"
+        
+        # 🚀 核心修复：提取数据库里的历史记录并喂给大模型
+        history_context = ""
+        # 为了防止 Token 爆炸或 AI 混淆，我们只取最近的 6 条消息（即最近 3 轮对话）
+        if history.messages:
+            recent_messages = history.messages[-6:]
+            for msg in recent_messages:
+                # 区分是用户说的还是 AI 说的
+                role = "用户" if msg.type == "human" else "AI"
+                history_context += f"{role}：{msg.content}\n"
+
+        # 根据是否有历史记录，动态构建丢给大模型的 Prompt
+        if history_context.strip():
+            enriched_input = f"【以下是你和用户的近期对话历史】\n{history_context}\n【当前用户的新问题】\n{message}\n\n请结合历史上下文回答当前问题。"
+        else:
+            enriched_input = f"【当前用户的问题】\n{message}"
+
         q = Queue()
 
         def _run_task():
