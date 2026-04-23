@@ -39,7 +39,12 @@
               </div>
               
               <div class="bubble" :class="{ 'error-bubble': msg.isError }">
-                {{ msg.content }}
+                <template v-if="msg.role === 'user'">
+                  {{ msg.content }}
+                </template>
+                <template v-else>
+                  <div class="markdown-body" v-html="md.render(msg.content || '')"></div>
+                </template>
                 
                 <div v-if="msg.isError" class="retry-action">
                   <el-button 
@@ -98,6 +103,10 @@ import {
   sendChatMessage,
   type AiConversation
 } from '../api/ai'; 
+
+import MarkdownIt from 'markdown-it';
+// 实例化 markdown-it，开启 HTML 标签和自动转换链接支持
+const md = new MarkdownIt({ html: true, breaks: true, linkify: true });
 
 // --- 状态定义 ---
 const conversationList = ref<AiConversation[]>([]);
@@ -445,5 +454,63 @@ onMounted(() => {
 /* 美化滚动条 */
 :deep(.el-scrollbar__bar.is-vertical > div) {
   background-color: rgba(64, 158, 255, 0.3);
+}
+
+/* ==================================================
+   🚀 专为 AI 气泡定制的 Markdown 样式 (深色玻璃风)
+   ================================================== */
+:deep(.markdown-body) {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+:deep(.markdown-body p) {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+:deep(.markdown-body p:last-child) {
+  margin-bottom: 0;
+}
+
+/* 强调字体 */
+:deep(.markdown-body strong) {
+  color: #409eff; /* 让加粗的文字变成科技蓝，更醒目 */
+  font-weight: 600;
+}
+
+/* ============ 优雅的表格样式 ============ */
+:deep(.markdown-body table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  background-color: rgba(0, 0, 0, 0.2); /* 半透明黑底 */
+  border-radius: 6px;
+  overflow: hidden; /* 让表格四个角变圆润 */
+  border: 1px solid rgba(64, 158, 255, 0.15); /* 外边框 */
+}
+
+:deep(.markdown-body th) {
+  background-color: rgba(64, 158, 255, 0.1); /* 表头浅蓝色背景 */
+  color: #409eff;
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
+}
+
+:deep(.markdown-body td) {
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* 行间分割线极细极淡 */
+}
+
+/* 最后一行去掉底边框 */
+:deep(.markdown-body tr:last-child td) {
+  border-bottom: none;
+}
+
+/* 鼠标悬浮表格行的高亮效果 */
+:deep(.markdown-body tbody tr:hover) {
+  background-color: rgba(64, 158, 255, 0.05);
 }
 </style>
