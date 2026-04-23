@@ -43,10 +43,20 @@
                   {{ msg.content }}
                 </template>
                 
+                <!-- <template v-else>
+                  <div class="markdown-body" v-html="md.render(formatMarkdown(msg.content))"></div>
+                </template> -->
+                
                 <template v-else>
+                  <div v-if="msg.isThinking" class="thinking-status">
+                    <span class="loading-dots">⏳</span> 
+                    AI 正在深度分析中... 
+                    <span class="time-count">已耗时 {{ msg.thinkTime }} 秒</span>
+                  </div>
+                  
                   <div class="markdown-body" v-html="md.render(formatMarkdown(msg.content))"></div>
                 </template>
-                
+
                 <div v-if="msg.isError" class="retry-action">
                   <el-button 
                     type="danger" 
@@ -88,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue';
+import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue';
 import { Plus, Delete, RefreshRight } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import MarkdownIt from 'markdown-it';
@@ -123,11 +133,37 @@ const inputText = ref('');
 const isTyping = ref(false);
 const scrollbarRef = ref<any>(null);
 
+// --- 计时器状态 ---
+const waitSeconds = ref(0);
+let timerInterval: ReturnType<typeof setInterval> | null = null;
+
+// 开启计时器，并动态更新对应气泡的文本
+const startWaitingTimer = (aiIdx: number) => {
+  waitSeconds.value = 0;
+  timerInterval = setInterval(() => {
+    waitSeconds.value++;
+    // 动态更新气泡内容，显示已等待的秒数
+    if (messageList.value[aiIdx]) {
+      messageList.value[aiIdx].content = `> ⏳ *AI 正在连接数据分析引擎，已等待 ${waitSeconds.value} 秒...*`;
+    }
+  }, 1000);
+};
+
+// 停止计时器
+const stopWaitingTimer = () => {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+};
+
 interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
   isError?: boolean;
   originalText?: string;
+  isThinking?: boolean; // 🚀 新增：是否正在思考
+  thinkTime?: number;   // 🚀 新增：思考耗时
 }
 const messageList = ref<ChatMessage[]>([]);
 
@@ -207,16 +243,35 @@ const handleSendMessage = async (retryText?: string) => {
   isTyping.value = true;
   scrollToBottom();
 
-  // 2. 预埋 AI 等待提示气泡
+  // 2. 预埋 AI 气泡，并初始化思考状态
   const aiIdx = messageList.value.push({ 
     role: 'ai', 
-    content: '> ⏳ *AI 正在连接数据分析引擎，请稍候...*' 
+    content: '',
+    isThinking: true, // 标记正在思考
+    thinkTime: 0      // 初始化耗时
   }) - 1;
+
+  // 🚀 启动计时器：每秒更新一次当前消息的 thinkTime
+  let timerInterval = setInterval(() => {
+    if (messageList.value[aiIdx]) {
+      messageList.value[aiIdx].thinkTime++;
+    }
+  }, 1000);
+
+  // 定义停止计时的内部函数
+  const stopTimer = () => {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+    if (messageList.value[aiIdx]) {
+      messageList.value[aiIdx].isThinking = false;
+    }
+  };
 
   try {
     const JAVA_BASE = import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080';
     
-    // 使用 fetch 建立 SSE 连接
     const response = await fetch(`${JAVA_BASE}/api/ai/conversations/chat/stream`, {
       method: 'POST',
       headers: {
@@ -235,10 +290,6 @@ const handleSendMessage = async (retryText?: string) => {
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let done = false;
-    let isFirstChunk = true;
-
-    
-    // 🌟 新增：数据缓冲池，用来拼接被网络切断的碎片包
     let buffer = ''; 
 
     while (!done) {
@@ -246,25 +297,20 @@ const handleSendMessage = async (retryText?: string) => {
       done = readerDone;
 
       if (value) {
-        // 1. 把新收到的碎片拼接到缓冲池里
         buffer += decoder.decode(value, { stream: true });
-        
-        // 2. 按照 SSE 标准的结束符 \n\n 来切分完整的事件
         const events = buffer.split('\n\n');
-        
-        // 3. 🌟 最关键的一步：最后一个元素可能是不完整的数据包，我们把它 pop 出来留在 buffer 里，等下一个网络包到了再继续拼
         buffer = events.pop() || '';
         
-        // 4. 安全地处理已经完整的事件
         for (const event of events) {
           const lines = event.split('\n');
           for (const line of lines) {
             if (line.startsWith('data:')) {
-              // 收到数据后，把伪装的 <<sp>> 还原成真正的空格
               let content = line.replace(/^data:\s?/, '').replace(/<<br>>/g, '\n').replace(/<<sp>>/g, ' ');
-              if (isFirstChunk && content) {
-                messageList.value[aiIdx]!.content = ''; // 收到第一个字，清空等待提示
-                isFirstChunk = false;
+              
+              // 🚀 关键改进：停止计时的判断逻辑
+              // 如果内容不为空，且不包含“分析中”相关的标记（即 AI 开始说人话了）
+              if (content.trim() !== '' && !content.includes('正在分析')) {
+                stopTimer(); 
               }
               
               messageList.value[aiIdx]!.content += content;
@@ -275,15 +321,16 @@ const handleSendMessage = async (retryText?: string) => {
       }
     }
 
-    // 传输结束后刷新列表（更新自动生成的标题）
     fetchConversations();
 
   } catch (error: any) {
     console.error('流式通讯失败:', error);
+    stopTimer(); // 报错也要停止
     messageList.value[aiIdx]!.isError = true;
     messageList.value[aiIdx]!.content = '网络连接异常或服务器处理超时 🔌';
     messageList.value[aiIdx]!.originalText = trimmedText;
   } finally {
+    stopTimer(); // 确保万无一失
     isTyping.value = false;
     scrollToBottom();
   }
@@ -302,6 +349,9 @@ const scrollToBottom = async () => {
 
 onMounted(() => {
   fetchConversations();
+});
+onBeforeUnmount(() => {
+  stopWaitingTimer();
 });
 </script>
 
@@ -540,5 +590,44 @@ onMounted(() => {
   margin-top: 8px;
   border-top: 1px solid rgba(245, 108, 108, 0.2);
   padding-top: 8px;
+}
+
+/* 🚀 思考计时器样式 */
+.thinking-status {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: #409eff;
+  background-color: rgba(64, 158, 255, 0.1);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  border: 1px dashed rgba(64, 158, 255, 0.3);
+  animation: pulse 2s infinite;
+}
+
+.thinking-status .loading-dots {
+  margin-right: 8px;
+  animation: rotate 2s linear infinite;
+}
+
+.thinking-status .time-count {
+  margin-left: auto;
+  font-family: monospace;
+  font-weight: bold;
+  color: #e6a23c;
+  background: rgba(230, 162, 60, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(64, 158, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0); }
+}
+
+@keyframes rotate {
+  100% { transform: rotate(360deg); }
 }
 </style>
