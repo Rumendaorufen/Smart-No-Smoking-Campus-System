@@ -30,10 +30,11 @@
         </div>
 
         <div class="user-actions">
-
-          <el-button color="#626aef" size="small" class="action-btn" @click="showAiChat = true">
-            <el-icon><ChatDotRound /></el-icon> AI 助理
-          </el-button>
+          <template v-if="isAdmin">
+            <el-button color="#626aef" size="small" class="action-btn" @click="showAiChat = true">
+              <el-icon><ChatDotRound /></el-icon> AI 助理
+            </el-button>
+          </template>
 
           <el-button type="danger" size="small" class="action-btn" @click="$router.push('/audit')">
             <el-icon><Bell /></el-icon> 报警仲裁
