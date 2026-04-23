@@ -1,6 +1,7 @@
 package org.example.webback.service;
 
 import org.example.webback.dto.AiChatRequest;
+import org.example.webback.dto.ChatMessageDto;
 import org.example.webback.entity.AiConversation;
 
 import java.util.List;
@@ -18,4 +19,7 @@ public interface AiChatService {
 
     // 4. 删除历史对话
     void deleteConversation(String conversationId, Long userId);
+
+    // 获取指定对话的聊天历史记录
+    List<ChatMessageDto> getHistoryMessages(String conversationId, Long userId);
 }

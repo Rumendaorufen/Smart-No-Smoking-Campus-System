@@ -93,6 +93,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { 
   getConversationList, 
   createConversation, 
+  getConversationMessages,
   deleteConversation, 
   sendChatMessage,
   type AiConversation
@@ -142,9 +143,27 @@ const handleCreateChat = async () => {
 };
 
 // 选择某一个对话
-const selectConversation = (id: string) => {
+// 选择某一个对话
+const selectConversation = async (id: string) => {
+  // 如果点击的是当前已经在看的对话，不重复加载
+  if (currentConversationId.value === id) return;
+  
   currentConversationId.value = id;
+  // 先清空屏幕，显示空白态或加载中状态
   messageList.value = []; 
+  
+  try {
+    // 🚀 去后端拉取该对话的真实历史记录！
+    const res = await getConversationMessages(id);
+    if (res.code === 200 && res.data) {
+      // 将历史记录直接赋值给屏幕渲染
+      messageList.value = res.data;
+      // 滚动到底部查看最新消息
+      scrollToBottom();
+    }
+  } catch (error) {
+    ElMessage.error('加载历史聊天记录失败');
+  }
 };
 
 // 删除对话

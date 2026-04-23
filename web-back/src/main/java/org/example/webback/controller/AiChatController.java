@@ -1,11 +1,15 @@
 package org.example.webback.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.example.webback.common.Result;
 import org.example.webback.dto.AiChatRequest;
 import org.example.webback.dto.AiChatResponse;
+import org.example.webback.dto.ChatMessageDto;
 import org.example.webback.entity.AiConversation;
 import org.example.webback.service.AiChatService;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.List;
 
@@ -19,9 +23,24 @@ public class AiChatController {
         this.aiChatService = aiChatService;
     }
 
-    // 💡 模拟当前登录用户，方便联调测试。测试完记得替换为真实鉴权逻辑！
+//    // 💡 模拟当前登录用户，方便联调测试。测试完记得替换为真实鉴权逻辑！
+//    private Long getCurrentUserId() {
+//        return 1L;
+//    }
+// 🚀 替换为真实的获取用户 ID 逻辑
     private Long getCurrentUserId() {
-        return 1L;
+        // 从 Spring 上下文中获取当前的 HTTP 请求对象
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attributes != null) {
+            HttpServletRequest request = attributes.getRequest();
+            // 获取 JwtInterceptor 拦截器里塞进去的 uid
+            Object uid = request.getAttribute("uid");
+            if (uid != null) {
+                return Long.valueOf(uid.toString());
+            }
+        }
+        // 理论上如果 JwtInterceptor 正常工作，不会走到这里。走到这里说明没有经过拦截器或未登录。
+        throw new RuntimeException("未能获取到当前登录用户信息，请重新登录");
     }
 
     /**
@@ -64,5 +83,10 @@ public class AiChatController {
     public Result<Void> delete(@PathVariable String id) {
         aiChatService.deleteConversation(id, getCurrentUserId());
         return Result.success();
+    }
+
+    @GetMapping("/{id}/messages")
+    public Result<List<ChatMessageDto>> getMessages(@PathVariable String id) {
+        return Result.success(aiChatService.getHistoryMessages(id, getCurrentUserId()));
     }
 }

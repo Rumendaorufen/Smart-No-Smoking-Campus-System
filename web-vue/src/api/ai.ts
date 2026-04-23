@@ -41,3 +41,8 @@ export function sendChatMessage(data: { conversationId: string; message: string 
     }
   );
 }
+
+// 获取指定会话的历史消息记录
+export function getConversationMessages(id: string) {
+  return request.get<any, Result<{ role: 'user' | 'ai', content: string }[]>>(`/api/ai/conversations/${id}/messages`);
+}
