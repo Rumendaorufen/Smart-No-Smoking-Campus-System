@@ -30,6 +30,11 @@
         </div>
 
         <div class="user-actions">
+
+          <el-button color="#626aef" size="small" class="action-btn" @click="showAiChat = true">
+            <el-icon><ChatDotRound /></el-icon> AI 助理
+          </el-button>
+
           <el-button type="danger" size="small" class="action-btn" @click="$router.push('/audit')">
             <el-icon><Bell /></el-icon> 报警仲裁
           </el-button>
@@ -203,6 +208,15 @@
     <div class="bottom-bar">
       <span>© 2026 智慧校园禁烟监控系统 · 实时视觉 AI 检测已开启</span>
     </div>
+    <el-drawer
+      v-model="showAiChat"
+      title="🤖 智能分析数据助理"
+      size="800px" 
+      :destroy-on-close="false"
+      class="ai-chat-drawer"
+    >
+      <AiChat />
+    </el-drawer>
   </div>
 </template>
 
@@ -214,11 +228,12 @@ import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { 
   Setting, SwitchButton, Refresh, Connection, Bell, Files, Platform,
-  FullScreen, VideoCameraFilled, Monitor, Loading, Warning, CircleCloseFilled, Odometer, ArrowRight
+  FullScreen, VideoCameraFilled, Monitor, Loading, Warning, CircleCloseFilled, Odometer, ArrowRight,ChatDotRound
 } from '@element-plus/icons-vue'
 import axios from 'axios'
 import SockJS from 'sockjs-client'
 import Stomp from 'stompjs'
+import AiChat from '../views/AiChat.vue'
 
 const JAVA_BASE = import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080'
 const AI_API = import.meta.env.VITE_APP_AI_API || 'http://localhost:5000'
@@ -226,6 +241,8 @@ const AI_API = import.meta.env.VITE_APP_AI_API || 'http://localhost:5000'
 const systemStatus = reactive({ totalStreams: 0, globalAi: false })
 const isSocketConnected = ref(false)
 const alarmState = ref<Record<number, boolean>>({}) 
+
+const showAiChat = ref(false)
 
 let stompClient: any = null
 let socket: any = null
@@ -471,4 +488,27 @@ const viewFullScreen = (id: number) => {
 @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 .loading-spinner.large { width: 50px; height: 50px; border: 4px solid #409eff; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 10px; }
 @media (max-width: 1200px) { .left-panel { display: none; } }
+/* --- 覆盖抽屉的默认背景，适配深色大屏主题 --- */
+:deep(.ai-chat-drawer) {
+  background-color: #0d1119; /* 匹配大屏底色 */
+  border-left: 1px solid rgba(64, 158, 255, 0.2);
+}
+:deep(.ai-chat-drawer .el-drawer__header) {
+  margin-bottom: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(64, 158, 255, 0.1);
+  font-weight: 600;
+  color: #409eff; /* 标题科技蓝 */
+  background: rgba(22, 33, 52, 0.95);
+}
+:deep(.ai-chat-drawer .el-drawer__body) {
+  padding: 0;
+  background: #0a0e17;
+}
+:deep(.ai-chat-drawer .el-drawer__close-btn) {
+  color: #909399; /* 调整关闭按钮颜色 */
+}
+:deep(.ai-chat-drawer .el-drawer__close-btn:hover) {
+  color: #f56c6c;
+}
 </style>
