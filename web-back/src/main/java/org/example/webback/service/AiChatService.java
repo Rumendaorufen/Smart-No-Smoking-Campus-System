@@ -3,6 +3,7 @@ package org.example.webback.service;
 import org.example.webback.dto.AiChatRequest;
 import org.example.webback.dto.ChatMessageDto;
 import org.example.webback.entity.AiConversation;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -22,4 +23,7 @@ public interface AiChatService {
 
     // 获取指定对话的聊天历史记录
     List<ChatMessageDto> getHistoryMessages(String conversationId, Long userId);
+
+    // 🚀 新增：流式对话接口
+    SseEmitter chatStream(Long userId, AiChatRequest request);
 }

@@ -13,9 +13,15 @@ import org.example.webback.entity.AiConversation;
 import org.example.webback.mapper.AiChatHistoryMapper;
 import org.example.webback.mapper.AiConversationMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.codec.ServerSentEvent;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -29,6 +35,9 @@ public class AiChatServiceImpl implements AiChatService {
     private final AiConversationMapper conversationMapper;
     private final RestTemplate restTemplate; // 用于发 HTTP 请求给 Python
     private final AiChatHistoryMapper chatHistoryMapper;
+
+    // 🚀 声明 WebClient
+    private final WebClient webClient = WebClient.builder().build();
 
     // 从 application.yml 读取 Python 服务的地址
     // 稍后我们需要在 yml 里配置： ai.agent.url: http://127.0.0.1:5050/api/agent/chat
@@ -76,7 +85,7 @@ public class AiChatServiceImpl implements AiChatService {
             // 将新标题更新到数据库中
             conversationMapper.updateById(conversation);
         }
-        
+
         // 2. 构造发给 Python 的 JSON 载荷
         Map<String, Object> payload = new HashMap<>();
         payload.put("message", request.getMessage());
@@ -99,6 +108,55 @@ public class AiChatServiceImpl implements AiChatService {
             log.error("调用 Python AI 引擎失败", e);
             throw new RuntimeException("无法连接到 AI 分析引擎，请检查服务状态");
         }
+    }
+
+    @Override
+    public SseEmitter chatStream(Long userId, AiChatRequest request) {
+        // 1. 安全校验 (逻辑不变)
+        AiConversation conversation = conversationMapper.selectById(request.getConversationId());
+        if (conversation == null || !conversation.getUserId().equals(userId)) {
+            throw new RuntimeException("非法操作");
+        }
+
+        // 2. 处理自动标题逻辑 (与之前同步模式一致)
+        if ("新对话".equals(conversation.getTitle())) {
+            String newTitle = request.getMessage().length() > 15 ?
+                    request.getMessage().substring(0, 15) + "..." : request.getMessage();
+            conversation.setTitle(newTitle);
+            conversationMapper.updateById(conversation);
+        }
+
+        // 3. 创建 SseEmitter，设置超时时间（例如 2 分钟）
+        SseEmitter emitter = new SseEmitter(0L);
+
+        // 4. 使用 WebClient 调用 Python 的流接口
+        // 4. 使用 WebClient 智能透传 SSE 流
+        webClient.post()
+                .uri(pythonAgentUrl + "/stream")
+                .bodyValue(request)
+                .retrieve()
+                // 🚀 终极修复 3：告诉 Spring 直接按标准 SSE 解析，杜绝所有缓冲和乱码！
+                .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() {})
+                .subscribe(
+                        sse -> {
+                            try {
+                                if (sse.data() != null) {
+                                    emitter.send(sse.data());
+                                }
+                            } catch (Exception e) {
+                                log.error("SSE 发送失败", e);
+                            }
+                        },
+                        error -> {
+                            log.error("调用 Python 流接口异常", error);
+                            emitter.completeWithError(error);
+                        },
+                        () -> {
+                            emitter.complete();
+                        }
+                );
+
+        return emitter;
     }
 
     @Override

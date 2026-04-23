@@ -1,8 +1,7 @@
-from flask import Flask, jsonify, request
-
+from flask import Flask, jsonify, request, Response, stream_with_context
+import re
 from agent_service import AgentService
 from config import get_settings
-
 
 settings = get_settings()
 agent_service = AgentService(settings)
@@ -23,7 +22,32 @@ def health():
         }
     )
 
+# 🚀 新增：流式对话接口
+@app.post("/api/agent/chat/stream")
+def chat_stream():
+    body = request.get_json(silent=True) or {}
+    message = str(body.get("message", "")).strip()
+    conversation_id = str(body.get("conversationId", "")).strip()
 
+    if not message or not conversation_id:
+        return jsonify({"code": 400, "msg": "参数缺失"}), 400
+
+    try:
+        def generate_sse():
+            generator = agent_service.ask_stream(message, conversation_id)
+            for chunk in generator:
+                # 🚀 物理拦截残留 SQL
+                clean = re.sub(r'SELECT.*?(LIMIT\s+\d+|;)', '', chunk, flags=re.IGNORECASE | re.DOTALL)
+                if not clean.strip() and chunk.strip(): continue
+                
+                # 把空格伪装成 <<sp>>，完美躲过任何网络层的自动裁剪
+                safe_chunk = clean.replace('\n', '<<br>>').replace(' ', '<<sp>>')
+                yield f"data: {safe_chunk}\n\n"
+        
+        return Response(stream_with_context(generate_sse()), mimetype='text/event-stream')
+    except Exception as exc:
+        return jsonify({"code": 500, "msg": str(exc)}), 500
+    
 @app.post("/api/agent/chat")
 def chat():
     body = request.get_json(silent=True) or {}

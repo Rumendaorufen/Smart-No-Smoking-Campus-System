@@ -42,8 +42,9 @@
                 <template v-if="msg.role === 'user'">
                   {{ msg.content }}
                 </template>
+                
                 <template v-else>
-                  <div class="markdown-body" v-html="md.render(msg.content || '')"></div>
+                  <div class="markdown-body" v-html="md.render(formatMarkdown(msg.content))"></div>
                 </template>
                 
                 <div v-if="msg.isError" class="retry-action">
@@ -58,11 +59,6 @@
                 </div>
               </div>
             </div>
-            
-            <div v-if="isTyping" class="message-item ai">
-              <div class="avatar">AI</div>
-              <div class="bubble typing">正在思考中...</div>
-            </div>
           </div>
         </el-scrollbar>
 
@@ -73,6 +69,7 @@
             :rows="3"
             placeholder="输入您的问题，比如：今天有几个报警？ (按 Enter 发送)"
             resize="none"
+            :disabled="isTyping"
             @keydown.enter.prevent="() => handleSendMessage()"
           />
           <div class="action-bar">
@@ -92,22 +89,33 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue';
-// 🚀 修改点 3：引入 RefreshRight 图标
 import { Plus, Delete, RefreshRight } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import MarkdownIt from 'markdown-it';
 import { 
   getConversationList, 
   createConversation, 
   getConversationMessages,
   deleteConversation, 
-  sendChatMessage,
-  type AiConversation
+  type AiConversation 
 } from '../api/ai'; 
 
-import MarkdownIt from 'markdown-it';
-// 实例化 markdown-it，开启 HTML 标签和自动转换链接支持
+// --- Markdown 配置 ---
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true });
 
+// 🚀 核心：修复 Markdown 表格渲染，确保表格前有空行
+const formatMarkdown = (content: string) => {
+  if (!content) return '';
+  
+  // 1. 还原后端传来的换行符
+  let text = content.replace(/<<br>>/g, '\n');
+  
+  // 2. 仅在“上一行不是换行也不是表格线”的情况下，给表格首行加上前置空行
+  // 这样既能保证表格独立，又不会切断表格内部的行
+  text = text.replace(/([^\n|])\n\|/g, '$1\n\n|');
+  
+  return text;
+};
 // --- 状态定义 ---
 const conversationList = ref<AiConversation[]>([]);
 const currentConversationId = ref<string>('');
@@ -115,16 +123,15 @@ const inputText = ref('');
 const isTyping = ref(false);
 const scrollbarRef = ref<any>(null);
 
-// 🚀 修改点 4：增强前端消息结构
 interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
-  isError?: boolean;      // 标记是否为报错气泡
-  originalText?: string;  // 报错时存下用户的提问
+  isError?: boolean;
+  originalText?: string;
 }
 const messageList = ref<ChatMessage[]>([]);
 
-// --- 方法实现 ---
+// --- 逻辑实现 ---
 
 // 初始化加载会话列表
 const fetchConversations = async () => {
@@ -151,23 +158,17 @@ const handleCreateChat = async () => {
   }
 };
 
-// 选择某一个对话
-// 选择某一个对话
+// 选择对话并加载历史记录
 const selectConversation = async (id: string) => {
-  // 如果点击的是当前已经在看的对话，不重复加载
-  if (currentConversationId.value === id) return;
+  if (currentConversationId.value === id && messageList.value.length > 0) return;
   
   currentConversationId.value = id;
-  // 先清空屏幕，显示空白态或加载中状态
   messageList.value = []; 
   
   try {
-    // 🚀 去后端拉取该对话的真实历史记录！
     const res = await getConversationMessages(id);
     if (res.code === 200 && res.data) {
-      // 将历史记录直接赋值给屏幕渲染
       messageList.value = res.data;
-      // 滚动到底部查看最新消息
       scrollToBottom();
     }
   } catch (error) {
@@ -177,30 +178,28 @@ const selectConversation = async (id: string) => {
 
 // 删除对话
 const handleDeleteChat = (id: string) => {
-  ElMessageBox.confirm('确定要删除这个对话吗？历史记录将无法恢复。', '提示', {
-    type: 'warning'
-  }).then(async () => {
-    const res = await deleteConversation(id);
-    if (res.code === 200) {
-      ElMessage.success('删除成功');
-      if (currentConversationId.value === id) {
-        currentConversationId.value = '';
-        messageList.value = [];
+  ElMessageBox.confirm('确定要删除这个对话吗？', '提示', { type: 'warning' })
+    .then(async () => {
+      const res = await deleteConversation(id);
+      if (res.code === 200) {
+        ElMessage.success('删除成功');
+        if (currentConversationId.value === id) {
+          currentConversationId.value = '';
+          messageList.value = [];
+        }
+        fetchConversations();
       }
-      fetchConversations();
-    }
-  }).catch(() => {});
+    }).catch(() => {});
 };
 
-// 🚀 修改点 5：支持重试与异常捕获的发送逻辑
+// 🚀 核心：流式发送消息逻辑
 const handleSendMessage = async (retryText?: string) => {
-  // 如果传了重试文本就用重试的，否则读取输入框的值
   const text = retryText || inputText.value;
   const trimmedText = text.trim();
   
   if (!trimmedText || isTyping.value) return;
 
-  // 1. 将用户问题上屏并清空输入框 (重试时不重复上屏)
+  // 1. 用户消息上屏
   if (!retryText) {
     messageList.value.push({ role: 'user', content: trimmedText });
   }
@@ -208,53 +207,92 @@ const handleSendMessage = async (retryText?: string) => {
   isTyping.value = true;
   scrollToBottom();
 
-  // 2. 调用后端接口
-  try {
-    const res = await sendChatMessage({
-      conversationId: currentConversationId.value,
-      message: trimmedText
-    });
-    
-    if (res.code === 200) {
-      messageList.value.push({ role: 'ai', content: res.data.answer });
-      // 🚀 新增：静默刷新一下左侧的会话列表，这样刚生成的新标题就会立马显示出来！
-      fetchConversations();
-    } else {
-      // 后端业务拦截报错
-      messageList.value.push({ 
-        role: 'ai', 
-        content: `抱歉，服务出现异常：${res.msg}`,
-        isError: true,
-        originalText: trimmedText
-      });
-    }
-  } catch (error: any) {
-    // 捕获前端 Axios 超时或网络异常
-    const isTimeout = error.message && error.message.toLowerCase().includes('timeout');
-    const friendlyMsg = isTimeout 
-      ? '抱歉，当前查询的数据量较大，我思考得太久大脑短路了 🤯。请稍后再试，或者尝试缩小查询的时间范围。' 
-      : '抱歉，网络似乎开小差了，无法连接到 AI 分析引擎 🔌。';
+  // 2. 预埋 AI 等待提示气泡
+  const aiIdx = messageList.value.push({ 
+    role: 'ai', 
+    content: '> ⏳ *AI 正在连接数据分析引擎，请稍候...*' 
+  }) - 1;
 
-    messageList.value.push({ 
-      role: 'ai', 
-      content: friendlyMsg, 
-      isError: true, 
-      originalText: trimmedText 
+  try {
+    const JAVA_BASE = import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080';
+    
+    // 使用 fetch 建立 SSE 连接
+    const response = await fetch(`${JAVA_BASE}/api/ai/conversations/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+      },
+      body: JSON.stringify({
+        conversationId: currentConversationId.value,
+        message: trimmedText
+      })
     });
+
+    if (!response.ok) throw new Error(`服务器异常: ${response.status}`);
+    if (!response.body) throw new Error('浏览器不支持流式传输');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let done = false;
+    let isFirstChunk = true;
+
+    
+    // 🌟 新增：数据缓冲池，用来拼接被网络切断的碎片包
+    let buffer = ''; 
+
+    while (!done) {
+      const { value, done: readerDone } = await reader.read();
+      done = readerDone;
+
+      if (value) {
+        // 1. 把新收到的碎片拼接到缓冲池里
+        buffer += decoder.decode(value, { stream: true });
+        
+        // 2. 按照 SSE 标准的结束符 \n\n 来切分完整的事件
+        const events = buffer.split('\n\n');
+        
+        // 3. 🌟 最关键的一步：最后一个元素可能是不完整的数据包，我们把它 pop 出来留在 buffer 里，等下一个网络包到了再继续拼
+        buffer = events.pop() || '';
+        
+        // 4. 安全地处理已经完整的事件
+        for (const event of events) {
+          const lines = event.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              // 收到数据后，把伪装的 <<sp>> 还原成真正的空格
+              let content = line.replace(/^data:\s?/, '').replace(/<<br>>/g, '\n').replace(/<<sp>>/g, ' ');
+              if (isFirstChunk && content) {
+                messageList.value[aiIdx]!.content = ''; // 收到第一个字，清空等待提示
+                isFirstChunk = false;
+              }
+              
+              messageList.value[aiIdx]!.content += content;
+              scrollToBottom();
+            }
+          }
+        }
+      }
+    }
+
+    // 传输结束后刷新列表（更新自动生成的标题）
+    fetchConversations();
+
+  } catch (error: any) {
+    console.error('流式通讯失败:', error);
+    messageList.value[aiIdx]!.isError = true;
+    messageList.value[aiIdx]!.content = '网络连接异常或服务器处理超时 🔌';
+    messageList.value[aiIdx]!.originalText = trimmedText;
   } finally {
     isTyping.value = false;
     scrollToBottom();
   }
 };
 
-// 一键重试逻辑
 const retryMessage = (text?: string) => {
-  if (text) {
-    handleSendMessage(text);
-  }
+  if (text) handleSendMessage(text);
 };
 
-// 自动滚动到最新消息
 const scrollToBottom = async () => {
   await nextTick();
   if (scrollbarRef.value) {
@@ -262,24 +300,22 @@ const scrollToBottom = async () => {
   }
 };
 
-// --- 生命周期 ---
 onMounted(() => {
   fetchConversations();
 });
 </script>
 
 <style scoped>
-/* 根容器：去掉白色，改为透明以继承抽屉的暗黑底色 */
+/* ==================================================
+    🚀 1. 基础布局与侧边栏 (保持科技感)
+   ================================================== */
 .ai-chat-container {
   display: flex;
-  height: 100%; 
-  border: none;
-  overflow: hidden;
+  height: 100%;
   background-color: transparent;
   color: #e4e7ed;
 }
 
-/* 左侧边栏：采用与大屏 Panel 相同的半透明背景 */
 .sidebar {
   width: 240px;
   background-color: rgba(22, 33, 52, 0.4);
@@ -296,42 +332,41 @@ onMounted(() => {
   width: 100%;
 }
 
-/* 历史会话列表：科技风 Hover 与 Active 效果 */
 .conversation-item {
   padding: 12px 16px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  transition: all 0.2s;
   color: #a3a6ad;
   border-left: 3px solid transparent;
+  transition: all 0.2s;
 }
 
 .conversation-item:hover {
   background-color: rgba(64, 158, 255, 0.08);
-  color: #e4e7ed;
 }
 
 .conversation-item.active {
-  background: linear-gradient(90deg, rgba(64,158,255,0.15) 0%, transparent 100%);
+  background: linear-gradient(90deg, rgba(64, 158, 255, 0.15) 0%, transparent 100%);
   color: #409eff;
   border-left: 3px solid #409eff;
 }
 
 .title {
   font-size: 14px;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* 聊天主体区域 */
+/* ==================================================
+    🚀 2. 聊天区域与气泡 (优化对齐与间距)
+   ================================================== */
 .chat-main {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: transparent;
 }
 
 .message-area {
@@ -341,26 +376,26 @@ onMounted(() => {
 
 .message-item {
   display: flex;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
+  align-items: flex-start; /* 确保头像和气泡顶端对齐 */
 }
 
 .message-item.user {
   flex-direction: row-reverse;
 }
 
-/* 头像配色适配 */
 .avatar {
   width: 40px;
   height: 40px;
   border-radius: 50%;
   background-color: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #a3a6ad;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 0 12px;
   font-size: 14px;
+  flex-shrink: 0;
 }
 
 .message-item.user .avatar {
@@ -369,41 +404,102 @@ onMounted(() => {
   border-color: rgba(64, 158, 255, 0.4);
 }
 
-/* 气泡配色：使用科技蓝边框和暗色背景 */
 .bubble {
-  max-width: 70%;
+  max-width: 75%;
   padding: 12px 16px;
   border-radius: 8px;
   background-color: rgba(22, 33, 52, 0.8);
   border: 1px solid rgba(64, 158, 255, 0.2);
-  line-height: 1.5;
-  word-break: break-all;
   color: #e4e7ed;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  line-height: 1.6;
 }
 
-/* 用户气泡的高亮效果 */
 .message-item.user .bubble {
   background-color: rgba(64, 158, 255, 0.15);
   border-color: rgba(64, 158, 255, 0.4);
-  color: #fff;
 }
 
-/* 错误状态的气泡暗黑适配 */
 .bubble.error-bubble {
   background-color: rgba(245, 108, 108, 0.1);
   color: #f56c6c;
-  border: 1px solid rgba(245, 108, 108, 0.3);
+  border-color: rgba(245, 108, 108, 0.3);
 }
 
-.retry-action {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed rgba(245, 108, 108, 0.3);
-  text-align: right;
+/* ==================================================
+    🚀 3. Markdown 内容渲染 (核心深度修复)
+   ================================================== */
+:deep(.markdown-body) {
+  font-size: 14px;
+  line-height: 1.7;
+  word-break: break-word;
 }
 
-/* 底部输入框区域：毛玻璃效果 */
+/* 段落间距 */
+:deep(.markdown-body p) {
+  margin: 0 0 12px 0;
+  white-space: pre-wrap;
+}
+
+:deep(.markdown-body p:last-child) {
+  margin-bottom: 0;
+}
+
+/* 强调色 */
+:deep(.markdown-body strong) {
+  color: #409eff;
+  font-weight: 600;
+}
+
+/* 列表修复：确保圆点显示且有缩进 */
+:deep(.markdown-body ul),
+:deep(.markdown-body ol) {
+  padding-left: 2em !important;
+  margin: 12px 0 !important;
+}
+
+:deep(.markdown-body ul) {
+  list-style-type: disc !important;
+}
+
+:deep(.markdown-body ol) {
+  list-style-type: decimal !important;
+}
+
+:deep(.markdown-body li) {
+  display: list-item !important;
+  margin-bottom: 6px;
+}
+
+/* 表格修复：深色科技感边框 */
+:deep(.markdown-body table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(64, 158, 255, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+:deep(.markdown-body th) {
+  background-color: rgba(64, 158, 255, 0.15);
+  color: #409eff;
+  font-weight: 600;
+  padding: 10px 14px;
+  border: 1px solid rgba(64, 158, 255, 0.1);
+  text-align: left;
+}
+
+:deep(.markdown-body td) {
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: #e4e7ed;
+}
+
+/* ==================================================
+    🚀 4. 输入区域 (解决变白问题)
+   ================================================== */
 .input-area {
   padding: 16px;
   background-color: rgba(22, 33, 52, 0.6);
@@ -411,26 +507,19 @@ onMounted(() => {
   backdrop-filter: blur(10px);
 }
 
-/* 🚀 核心：深度覆盖 Element Plus 的默认白底 Input */
 :deep(.el-textarea__inner) {
-  background-color: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(64, 158, 255, 0.2);
-  color: #e4e7ed;
-  box-shadow: none;
+  background-color: rgba(0, 0, 0, 0.3) !important;
+  border: 1px solid rgba(64, 158, 255, 0.2) !important;
+  color: #e4e7ed !important;
+  box-shadow: none !important;
 }
 
-:deep(.el-textarea__inner:focus) {
-  border-color: #409eff;
-  box-shadow: inset 0 0 5px rgba(64, 158, 255, 0.2);
-}
-
-:deep(.el-textarea__inner::placeholder) {
-  color: #606266;
-}
-
-:deep(.el-input__count) {
-  background: transparent;
-  color: #909399;
+/* 🚀 核心：解决禁用状态（正在思考时）背景变白的问题 */
+:deep(.el-textarea.is-disabled .el-textarea__inner) {
+  background-color: rgba(0, 0, 0, 0.3) !important;
+  border-color: rgba(64, 158, 255, 0.1) !important;
+  color: #606266 !important;
+  cursor: not-allowed;
 }
 
 .action-bar {
@@ -439,78 +528,17 @@ onMounted(() => {
   justify-content: flex-end;
 }
 
-/* 空状态的文字颜色适配 */
+/* 状态展示 */
 .empty-state {
-  height: 100%;
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-:deep(.el-empty__description p) {
-  color: #606266;
-}
-
-/* 美化滚动条 */
-:deep(.el-scrollbar__bar.is-vertical > div) {
-  background-color: rgba(64, 158, 255, 0.3);
-}
-
-/* ==================================================
-   🚀 专为 AI 气泡定制的 Markdown 样式 (深色玻璃风)
-   ================================================== */
-:deep(.markdown-body) {
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-:deep(.markdown-body p) {
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-:deep(.markdown-body p:last-child) {
-  margin-bottom: 0;
-}
-
-/* 强调字体 */
-:deep(.markdown-body strong) {
-  color: #409eff; /* 让加粗的文字变成科技蓝，更醒目 */
-  font-weight: 600;
-}
-
-/* ============ 优雅的表格样式 ============ */
-:deep(.markdown-body table) {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 12px 0;
-  background-color: rgba(0, 0, 0, 0.2); /* 半透明黑底 */
-  border-radius: 6px;
-  overflow: hidden; /* 让表格四个角变圆润 */
-  border: 1px solid rgba(64, 158, 255, 0.15); /* 外边框 */
-}
-
-:deep(.markdown-body th) {
-  background-color: rgba(64, 158, 255, 0.1); /* 表头浅蓝色背景 */
-  color: #409eff;
-  font-weight: 600;
-  text-align: left;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(64, 158, 255, 0.2);
-}
-
-:deep(.markdown-body td) {
-  padding: 8px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* 行间分割线极细极淡 */
-}
-
-/* 最后一行去掉底边框 */
-:deep(.markdown-body tr:last-child td) {
-  border-bottom: none;
-}
-
-/* 鼠标悬浮表格行的高亮效果 */
-:deep(.markdown-body tbody tr:hover) {
-  background-color: rgba(64, 158, 255, 0.05);
+.retry-action {
+  margin-top: 8px;
+  border-top: 1px solid rgba(245, 108, 108, 0.2);
+  padding-top: 8px;
 }
 </style>

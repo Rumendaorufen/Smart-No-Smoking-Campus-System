@@ -7,9 +7,11 @@ import org.example.webback.dto.AiChatResponse;
 import org.example.webback.dto.ChatMessageDto;
 import org.example.webback.entity.AiConversation;
 import org.example.webback.service.AiChatService;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -74,6 +76,14 @@ public class AiChatController {
         AiChatResponse response = new AiChatResponse();
         response.setAnswer(answer);
         return Result.success(response);
+    }
+
+    /**
+     * 核心：AI 流式对话接口
+     */
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chatStream(@RequestBody AiChatRequest request) {
+        return aiChatService.chatStream(getCurrentUserId(), request);
     }
 
     /**
