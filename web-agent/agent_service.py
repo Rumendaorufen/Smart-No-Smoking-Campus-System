@@ -115,9 +115,26 @@ class AgentService:
     def _build_agent_executor(self):
         llm = self._build_llm()
         db = build_sql_database(self.settings)
-        toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+        # toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+        # 🚀 1. 核心修复：创建一个局部的自定义 Toolkit 类
+        # 通过继承原生的 SQLDatabaseToolkit，重写 get_tools 方法来强行拦截
+        class FastSQLToolkit(SQLDatabaseToolkit):
+            def get_tools(self):
+                # 获取原本所有的工具
+                all_tools = super().get_tools()
+                # 强行过滤，只交出查询和检查语法的工具
+                return [t for t in all_tools if t.name in ["sql_db_query", "sql_db_query_checker"]]
+        
+        # 🚀 2. 实例化我们自定义的“极速版” Toolkit
+        toolkit = FastSQLToolkit(db=db, llm=llm)
+
         prompt = build_system_prompt(db.dialect, self.settings.sql_top_k, self.settings.include_tables)
-        return create_sql_agent(llm=llm, toolkit=toolkit, agent_type="openai-tools", verbose=True, prefix=prompt)
+        return create_sql_agent(llm=llm, 
+                                # toolkit=toolkit, 
+                                toolkit=toolkit, # 传入精简后的工具
+                                agent_type="openai-tools", 
+                                verbose=True, 
+                                prefix=prompt)
 
     def _build_llm(self) -> ChatOpenAI:
         return ChatOpenAI(model=self.settings.openai_model, temperature=0, streaming=True, 
