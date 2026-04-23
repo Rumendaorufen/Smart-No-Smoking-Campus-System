@@ -65,6 +65,18 @@ public class AiChatServiceImpl implements AiChatService {
             throw new RuntimeException("非法操作：该对话不存在或无权访问");
         }
 
+        // 🚀 新增逻辑：首轮对话自动生成标题
+        // 判断如果当前标题还是默认的 "新对话"，说明这是这批对话的第一条消息
+        if ("新对话".equals(conversation.getTitle())) {
+            String firstMessage = request.getMessage().trim();
+            // 截取用户提问的前 15 个字符作为标题（如果超长就加省略号，防止侧边栏撑爆）
+            String newTitle = firstMessage.length() > 15 ? firstMessage.substring(0, 15) + "..." : firstMessage;
+
+            conversation.setTitle(newTitle);
+            // 将新标题更新到数据库中
+            conversationMapper.updateById(conversation);
+        }
+        
         // 2. 构造发给 Python 的 JSON 载荷
         Map<String, Object> payload = new HashMap<>();
         payload.put("message", request.getMessage());

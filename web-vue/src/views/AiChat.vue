@@ -208,6 +208,8 @@ const handleSendMessage = async (retryText?: string) => {
     
     if (res.code === 200) {
       messageList.value.push({ role: 'ai', content: res.data.answer });
+      // 🚀 新增：静默刷新一下左侧的会话列表，这样刚生成的新标题就会立马显示出来！
+      fetchConversations();
     } else {
       // 后端业务拦截报错
       messageList.value.push({ 
