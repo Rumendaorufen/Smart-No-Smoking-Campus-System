@@ -83,26 +83,26 @@ flowchart TD
 
 ```mermaid
 graph TD
-    A[RTSP 视频流输入] --> B{智能握手 Smart Handshake};
-    B -- 失败 --> C[自动重试/休眠唤醒];
-    B -- 成功 --> D[解码器 Buffer=1 (极低延迟)];
+    A["RTSP 视频流输入"] --> B{"智能握手 Smart Handshake"};
+    B -- 失败 --> C["自动重试/休眠唤醒"];
+    B -- 成功 --> D["解码器 Buffer=1 极低延迟"];
     
-    D --> E[全局单例检测器 (Singleton)];
+    D --> E["全局单例检测器 Singleton"];
     
     subgraph AI推理管线 [GPU FP16加速]
-        E --> F[Stage 1: 全局找人 (YOLOv8s)];
-        F --> G[ROI筛选: 面积最大的TopN];
-        G --> H[动态裁切: 上半身+Padding外扩];
-        H --> I[Batch Tensor 打包];
-        I --> J[Stage 2: 局部找烟 (YOLO-Smoke)];
+        E --> F["Stage 1: 全局找人 YOLOv8s"];
+        F --> G["ROI筛选: 面积最大的TopN"];
+        G --> H["动态裁切: 上半身+Padding外扩"];
+        H --> I["Batch Tensor 打包"];
+        I --> J["Stage 2: 局部找烟 YOLO-Smoke"];
     end
     
-    J --> K[坐标还原 + 相对位置计算];
-    K --> L{是否检测到?};
-    L -- 是 --> M[更新记忆库 (Life=3)];
-    L -- 否 --> N[调用惯性记忆补全];
+    J --> K["坐标还原 + 相对位置计算"];
+    K --> L{"是否检测到?"};
+    L -- 是 --> M["更新记忆库 Life=3"];
+    L -- 否 --> N["调用惯性记忆补全"];
     
-    M --> O[输出最终检测框];
+    M --> O["输出最终检测框"];
     N --> O;
 
 ```
