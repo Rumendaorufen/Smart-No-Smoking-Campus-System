@@ -25,6 +25,8 @@ debug_evidence/
 .env.test.local
 .env.production.local
 
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]
