@@ -36,30 +36,26 @@
 
 ## 系统架构
 
-```
-                    ┌──────────────────────────────────┐
-                    │     Vue 3 前端大屏 (port 5173)     │
-                    │  Monitor / Audit / Archive / Chat │
-                    └──────────┬──────────┬────────────┘
-                               │ HTTP     │ SockJS/STOMP
-                               ▼          ▼
-                    ┌──────────────────────────────────┐
-                    │   Java Spring Boot 中台 (port 8080)│
-                    │  鉴权 / CRUD / WebSocket / SSE代理 │
-                    └────┬──────┬──────┬───────────────┘
-                         │      │      │
-              ┌──────────┘      │      └──────────┐
-              ▼                 ▼                  ▼
-    ┌─────────────────┐  ┌───────────┐  ┌───────────────────┐
-    │ Python AI 引擎   │  │ MySQL 8.0 │  │ Python AI Agent   │
-    │ YOLOv8 + Flask   │  │ (port 3308)│  │ LangChain + LLM   │
-    │ (port 5000)      │  └───────────┘  │ (port 5050)       │
-    └────────┬─────────┘                  └───────────────────┘
-             │ RTSP
-             ▼
-    ┌─────────────────┐
-    │   IP 摄像头 x N   │
-    └─────────────────┘
+```mermaid
+graph TD
+    %% 节点定义
+    Vue["Vue 3 前端大屏 (port 5173)<br>Monitor / Audit / Archive / Chat"]
+    Spring["Java Spring Boot 中台 (port 8080)<br>鉴权 / CRUD / WebSocket / SSE代理"]
+    
+    AIEngine["Python AI 引擎 (port 5000)<br>YOLOv8 + Flask"]
+    DB[("MySQL 8.0 (port 3308)")]
+    AIAgent["Python AI Agent (port 5050)<br>LangChain + LLM"]
+    
+    Camera["IP 摄像头 x N"]
+
+    %% 连线关系
+    Vue -- "HTTP / SockJS / STOMP" --> Spring
+    
+    Spring --> AIEngine
+    Spring --> DB
+    Spring --> AIAgent
+    
+    AIEngine -- "RTSP" --> Camera
 ```
 
 ### 服务职责

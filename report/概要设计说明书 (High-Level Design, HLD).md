@@ -1,12 +1,10 @@
+# 智慧校园禁烟监控系统 — 概要设计说明书 (HLD)
 
-
-# 高校无烟校园智能监测系统 - 概要设计说明书
-
-| 项目名称 | 高校无烟校园智能监测系统 (Smart No-Smoking Campus System) |
+| 项目名称 | 智慧校园禁烟监控系统 (Smart No-Smoking Campus System) |
 | --- | --- |
-| **文档编号** | HLD-2025-NSCS-V1.0 |
-| **版本号** | V 1.0 |
-| **设计日期** | 2025年12月30日 |
+| **文档编号** | HLD-2026-NSCS-V3.0 |
+| **版本号** | V 3.0（四服务架构版） |
+| **设计日期** | 2026-05-08 |
 | **密级** | 内部公开 |
 
 ---
@@ -15,159 +13,387 @@
 
 ### 1.1 设计目标
 
-本设计旨在构建一个高内聚、低耦合、易扩展的智能化视频监控系统。重点解决**多路视频流并发处理**、**级联算法的工程化落地**以及**证据视频的实时截取与存储**问题。
+设计一个高内聚、低耦合、职责清晰的分布式监控系统。核心目标：
+
+- **关注点分离：** AI 推理、业务逻辑、数据分析、前端展示四个独立服务
+- **实时性：** 报警延迟控制在秒级（检测→WebSocket→前端弹窗）
+- **可扩展：** 新增摄像头仅需数据库注册，无需修改代码
+- **安全性：** 分层鉴权 + 最小权限 + 物理隔离
 
 ### 1.2 设计原则
 
-* **模块化：** 算法推理、业务逻辑、Web服务分离，便于独立调试。
-* **实时性：** 保证报警延迟控制在秒级。
-* **复用性：** 充分利用开源生态（YOLO, Flask, Vue），避免重复造轮子。
+- **单一职责：** 每个服务只做一件事（Python 不写业务逻辑，Java 不做 AI 推理）
+- **接口标准化：** 统一 `{ code, msg, data }` 响应格式
+- **故障隔离：** 一个服务宕机不影响其他服务核心功能
+- **优先开源生态：** 充分复用 YOLO、LangChain、Spring Boot、Element Plus 等成熟框架
+- **防御性编程：** 占位符保护（`<<sp>>`/`<<br>>`）防网络层裁切、Buffer 缓冲防 TCP 粘包
 
 ---
 
-## 2. 系统总体架构设计
+## 2. 系统总体架构
 
-### 2.1 逻辑架构图 (Layered Architecture)
+### 2.1 四服务协同架构
 
-系统采用经典的 **分层架构**，自下而上分为：硬件接入层、核心算法层、业务逻辑层、表现层。
+```mermaid
+graph TD
+    %% 前端节点
+    Vue["<b>Vue 3 前端 (Port 5173)</b><br>Vite dev server, proxy /api → localhost:8080"]
 
-1. **表现层 (Presentation Layer):**
-* **Web 前端 (Vue3 + Element Plus):** 提供实时大屏、报警弹窗、视频回放、数据报表。
+    %% 中台节点与内部结构 (使用子图嵌套)
+    subgraph SpringBoot ["Java Spring Boot 中台 (Port 8080)"]
+        direction TB
+        
+        subgraph Core ["业务与通讯层"]
+            direction LR
+            Security["Security<br>+ JWT"]
+            Controller["Controller<br>(7个)"]
+            Service["Service<br>(6个)"]
+            WS["WebSocket<br>(STOMP)"]
+        end
+        
+        DB[("MyBatis-Plus Mapper<br>↓<br>MySQL 8.0 (Port 3308)")]
+        
+        Core --> DB
+    end
 
+    %% AI 引擎节点
+    AIEngine["<b>Python AI 引擎 (Port 5000)</b><br>Flask + YOLOv8<br><br>▪ RTSP 拉流<br>▪ 双模型推理<br>▪ 证据录制<br>▪ MJPEG 视频推送"]
 
-2. **业务服务层 (Business Logic Layer):**
-* **Web API (Flask):** 处理前端请求、用户认证、设备管理。
-* **消息推送 (WebSocket):** 实现报警信息的实时推送。
+    %% AI Agent 节点
+    AIAgent["<b>Python AI Agent (Port 5050)</b><br>Flask + LangChain<br><br>▪ SQL Agent 构建<br>▪ 自然语言→SQL→报告<br>▪ SSE 流式输出<br>▪ 对话历史管理"]
 
+    %% 硬件节点
+    Camera["IP 摄像头 x N"]
 
-3. **核心算法层 (AI Engine Layer):**
-* **视频管道 (Video Pipeline):** 负责 RTSP 拉流、解码、环形缓存。
-* **推理引擎 (Inference Engine):**
-* *Stage 1:* YOLOv8-Pose (姿态行为初筛).
-* *Stage 2:* CNN Classifier (局部吸烟确认).
-* *Auxiliary:* YOLOv8-Detect (火焰烟雾检测).
+    %% 前端到中台连线
+    Vue -- "HTTP + JWT" --> Security
+    Vue -- "SockJS/STOMP" --> WS
+    Vue -- "MJPEG &lt;img&gt;" --> Controller
+    
+    %% 中台到 AI 服务连线
+    Controller -- "HTTP (REST)" --> AIEngine
+    Controller -- "HTTP (REST + SSE代理)" --> AIAgent
+    
+    %% 设备到 AI 引擎连线
+    AIEngine -- "RTSP/TCP" --> Camera
 
+    %% 样式美化
+    classDef frontend fill:#1e1e1e,stroke:#4fc08d,stroke-width:2px,color:#fff
+    classDef backend fill:#1e1e1e,stroke:#6db33f,stroke-width:2px,color:#fff
+    classDef inner fill:#2d2d2d,stroke:#555,stroke-width:1px,color:#ddd
+    classDef ai fill:#1e1e1e,stroke:#3776ab,stroke-width:2px,color:#fff
+    classDef device fill:#1e1e1e,stroke:#aaa,stroke-width:2px,color:#fff
+    classDef database fill:#1e1e1e,stroke:#f29111,stroke-width:2px,color:#fff
 
+    class Vue frontend
+    class SpringBoot backend
+    class Security,Controller,Service,WS inner
+    class AIEngine,AIAgent ai
+    class Camera device
+    class DB database
+```
 
+### 2.2 服务通信矩阵
 
-4. **数据持久层 (Data Layer):**
-* **MySQL:** 存储结构化数据（用户、设备、报警记录）。
-* **File System:** 存储非结构化数据（证据视频片段 .mp4、抓拍图片 .jpg）。
+| 调用方 | 被调方 | 协议 | 认证方式 | 典型场景 |
+| --- | --- | --- | --- | --- |
+| web-vue | web-back | HTTP REST | JWT Bearer Token | 所有业务 API |
+| web-vue | web-back | WebSocket (SockJS/STOMP) | 无（connect 时免认证） | 报警实时推送 |
+| web-vue | web-flask | HTTP (MJPEG) | 无 | `<img>` 标签展示视频流 |
+| web-back | web-agent | HTTP REST | 无（内网直连） | 同步问答 / SSE 流代理 |
+| web-flask | web-back | HTTP REST | 无（白名单路径） | 报警上报、设备状态同步、设备列表拉取 |
+| web-agent | MySQL | TCP | 只读账号 `ai_reader` | SQL 查询视图 |
 
+### 2.3 物理部署拓扑
 
+```mermaid
+graph TD
+    subgraph LAN ["🌐 校园局域网 (LAN)"]
+        direction TB
+        
+        %% 监控设备层
+        subgraph Cameras ["监控设备层"]
+            direction LR
+            Cam1["📷 摄像头 1"]
+            Cam2["📷 摄像头 2"]
+            CamN["📷 摄像头 N"]
+        end
+        
+        %% 核心服务器层
+        AIServer["<b>🧠 AI 推理服务器 (GPU)</b><br>web-flask:5000 + web-agent:5050"]
+        BizServer["<b>⚙️ 业务服务器</b><br>web-back:8080 + MySQL:3308"]
+        Client["<b>💻 客户端 (浏览器)</b><br>web-vue dev server: 5173"]
+        
+        %% 精确连线与协议说明 (修复了子图连线的兼容性问题)
+        Cam1 -- "RTSP" --> AIServer
+        Cam2 -- "RTSP" --> AIServer
+        CamN -- "RTSP" --> AIServer
+        
+        AIServer -- "HTTP (告警推送 / 报告)" --> BizServer
+        BizServer <-->|"HTTP / WebSocket (双向交互)"| Client
+    end
 
-### 2.2 物理部署架构
+    %% 样式美化 (沉浸式暗色科技风)
+    classDef lan fill:#121212,stroke:#444,stroke-width:2px,color:#e0e0e0,stroke-dasharray: 5 5
+    classDef layer fill:transparent,stroke:#333,stroke-width:1px,stroke-dasharray: 3 3,color:#888
+    classDef cam fill:#1e1e1e,stroke:#4fc08d,stroke-width:2px,color:#fff
+    classDef ai fill:#1e1e1e,stroke:#3776ab,stroke-width:2px,color:#fff
+    classDef biz fill:#1e1e1e,stroke:#6db33f,stroke-width:2px,color:#fff
+    classDef client fill:#1e1e1e,stroke:#f29111,stroke-width:2px,color:#fff
 
-* **边缘计算节点 (Edge Server):** 部署 Python 后端与 AI 模型，直接接入校园局域网内的摄像头。
-* **客户端 (Client):** 浏览器（PC端/移动端），通过 HTTP/WebSocket 访问服务器。
+    class LAN lan
+    class Cameras layer
+    class Cam1,Cam2,CamN cam
+    class AIServer ai
+    class BizServer biz
+    class Client client
+```
 
 ---
 
-## 3. 核心模块划分与设计
+## 3. 模块划分
 
-系统核心划分为四大子系统模块。
+### 3.1 模块总览
 
-### 3.1 视频采集与缓存模块 (Video Acquisition)
+| 模块 | 工程目录 | 端口 | 技术栈 | 核心职责 |
+| --- | --- | --- | --- | --- |
+| 前端大屏 | `web-vue/` | 5173 | Vue 3 + TS + Element Plus + Pinia + ECharts | 用户交互、状态管理、图表渲染 |
+| 业务中台 | `web-back/` | 8080 | Spring Boot 3 + MyBatis-Plus + WebSocket | 鉴权、CRUD、报警推送、SSE 代理 |
+| AI 视觉引擎 | `web-flask/` | 5000 | Flask + YOLOv8 + OpenCV + PyTorch | RTSP 拉流、吸烟检测、证据录制 |
+| AI 分析助手 | `web-agent/` | 5050 | Flask + LangChain + SQLDatabaseToolkit | NL→SQL、流式问答、对话记忆 |
 
-这是系统的“眼睛”，负责从摄像头获取画面并为 AI 准备数据。
+### 3.2 前端模块（web-vue）
 
-* **功能描述：**
-* 使用 `OpenCV` 或 `FFmpeg` 拉取 RTSP 流。
-* 维护一个 **定长双端队列 (deque)** 作为“环形缓冲区”，始终保存当前时刻前 5 秒的帧数据。
-* 负责视频帧的格式转换 (BGR -> RGB)。
+7 个路由页面、5 个 API 模块、1 个 Pinia Store：
 
+| 页面 | 路由 | 权限 | 功能 |
+| --- | --- | --- | --- |
+| Login | `/login` | 公开 | 登录 |
+| Monitor | `/` | 已登录 | 主监控大屏 + AI 对话抽屉 |
+| AuditConsole | `/audit` | 已登录 | 报警仲裁台 |
+| AlarmArchive | `/archive` | 已登录 | 历史档案 |
+| SystemControl | `/system` | admin | 系统控制台 |
+| DeviceManage | `/devices` | admin | 设备管理 |
+| UserManage | `/users` | admin | 用户管理 |
 
-* **关键技术：** `cv2.VideoCapture`, `collections.deque`, 多线程 (`threading`).
+### 3.3 业务中台模块（web-back）
 
-### 3.2 AI 智能推理模块 (Intelligent Analysis)
+**控制器层（7 个 Controller）：**
 
-这是系统的“大脑”，负责实现级联检测算法。
-
-* **功能描述：**
-* **姿态分析器 (Pose Analyzer):** 运行 YOLOv8-Pose，计算手腕与嘴部欧氏距离，输出 `Is_Suspected` 信号。
-* **ROI 裁剪器 (ROI Cropper):** 当 `Is_Suspected=True`，裁剪头部区域。
-* **行为验证器 (Action Verifier):** 运行 CNN 分类器，判定是否存在香烟。
-* **多任务调度:** 按时间片轮询，偶尔插入一次火灾检测。
-
-
-* **关键技术：** `Ultralytics YOLO`, `PyTorch`, `NumPy`.
-
-### 3.3 报警取证模块 (Evidence Generator)
-
-这是系统的“记录员”，负责固化证据。
-
-* **功能描述：**
-* 接收 AI 模块的报警触发信号。
-* **回溯录制：** 从环形缓冲区导出前 5 秒视频。
-* **延时录制：** 继续录制后 5 秒视频。
-* **合成存储：** 使用 `cv2.VideoWriter` 合成 10 秒 MP4 文件，写入磁盘。
-
-
-* **关键技术：** 视频编解码 (Codec), 文件 I/O.
-
-### 3.4 业务管理模块 (Business Management)
-
-这是系统的“管家”，负责对外交互。
-
-* **功能描述：**
-* **设备管理：** 增删改查摄像头信息（RTSP地址、位置名称）。
-* **报警管理：** 提供 API 供前端查询报警列表、更新审核状态。
-* **实时推流：** 将 OpenCV 处理后的带有画框的视频流，通过 `Response(generate(), mimetype='multipart/x-mixed-replace...')` 推送给前端 `<img>` 标签。
-
-
-
----
-
-## 4. 关键技术选型 (Tech Stack)
-
-| 类别 | 技术/工具 | 选型理由 |
+| 控制器 | 路径前缀 | 核心接口 |
 | --- | --- | --- |
-| **前端框架** | **Vue.js 3 + Vite** | 响应式数据绑定，开发效率高，适合构建单页应用(SPA)。 |
-| **UI 组件库** | **Element Plus** | 提供成熟的后台管理组件（表格、弹窗、表单），美观且易用。 |
-| **后端框架** | **Python Flask** | 轻量级，易于集成 PyTorch 等 AI 库，适合中小型项目快速开发。 |
-| **AI 框架** | **PyTorch + Ultralytics** | YOLOv8 生态完善，推理速度快，Pose 模型精度高。 |
-| **CV 库** | **OpenCV (Python)** | 视频流处理的标准库，功能强大。 |
-| **数据库** | **MySQL 8.0** | 关系型数据库标准，存储报警元数据稳定可靠。 |
-| **ORM 框架** | **SQLAlchemy** | 简化数据库操作，避免手写 SQL 语句。 |
-| **视频存储** | **本地文件系统** | 简单直接，无需搭建复杂的对象存储服务（OSS），适合校内局域网环境。 |
+| AuthController | `/api/auth` | login, logout, me |
+| AlarmController | `/api/alerts` | pending, audit, archive, delete, report |
+| DeviceController | `/api/monitor/devices` + `/api/internal/devices` | CRUD, status-only, sync-status |
+| AiChatController | `/api/ai/conversations` | 会话管理, chat, chat/stream, messages |
+| SystemController | `/api/system` | status, control/global_ai_db |
+| InternalController | `/api/internal` | alarm/report (Python→Java→WebSocket) |
+| UserController | `/api/user` | CRUD |
 
----
+**服务层（6 个 Service）：** AuthService, AlarmService, DeviceService, AiChatServiceImpl, UserService, SystemMonitorService
 
-## 5. 数据库设计 (Database Design)
+### 3.4 AI 视觉引擎模块（web-flask）
 
-仅列出最核心的 **报警记录表 (alarms)** 设计。
-
-| 字段名 (Field) | 类型 (Type) | 描述 (Description) |
+| 组件 | 文件 | 职责 |
 | --- | --- | --- |
-| `id` | INT (PK) | 自增主键 |
-| `camera_id` | INT (FK) | 关联摄像头ID |
-| `event_type` | ENUM | 'SMOKING' (吸烟), 'FIRE' (火灾) |
-| `alert_time` | DATETIME | 报警触发时间 |
-| `img_path` | VARCHAR(255) | 抓拍图片存储路径 |
-| `video_path` | VARCHAR(255) | 10秒证据视频存储路径 |
-| `status` | INT | 0:待审核, 1:已确认, 2:已忽略 |
-| `reviewer` | VARCHAR(50) | 审核人姓名（审核后填写） |
+| StreamManager (单例) | `stream_loader.py` | 全局设备管理、全局 AI 开关 |
+| StreamLoader | `stream_loader.py` | 单路摄像头：拉流/推理/录像 三线程模型 |
+| SmokingDetector (单例) | `detector.py` | 双模型加载、级联推理、碰对/惯性追踪 |
+| EvidenceRecorder | `recorder.py` | 环形缓冲、录像合成、FFmpeg 转码 |
+| monitor_bp | `api/monitor.py` | MJPEG 流推送、设备同步、点火保护 |
+| system_bp | `api/system.py` | 全局 AI 开关控制 |
+
+### 3.5 AI 分析助手模块（web-agent）
+
+| 组件 | 文件 | 职责 |
+| --- | --- | --- |
+| Flask App | `app.py` | HTTP 入口、SSE 流式 + 同步两个接口 |
+| AgentService | `agent_service.py` | Agent 构建（双重检查锁单例）、流式推理、历史注入 |
+| Settings | `config.py` | 环境变量配置（frozen dataclass） |
+| System Prompt | `prompt.py` | SQL Agent 指令（注入 Schema、安全约束、输出规范） |
+| DB Toolkit | `db_toolkit.py` | SQLDatabase 连接初始化 |
 
 ---
 
-## 6. 接口设计原则 (API Design)
+## 4. 核心流程设计
 
-系统 API 遵循 RESTful 规范。
+### 4.1 吸烟检测→报警→审核 完整链路
 
-* **GET /api/video_feed/<cam_id>**: 获取指定摄像头的实时监控流（MJPEG流）。
-* **GET /api/alarms**: 获取报警历史记录列表（支持分页、按时间筛选）。
-* **POST /api/alarms/<id>/audit**: 审核报警（提交确认或忽略的操作）。
-* **GET /api/stats/summary**: 获取今日报警统计数据（用于大屏展示）。
+```
+摄像头 RTSP 流
+    │
+    ▼
+StreamLoader._reader_thread  持续拉流 → latest_frame
+    │
+    ▼
+StreamLoader._processor_thread  取帧 → 推理 → 报警判定
+    │
+    ├── 非报警帧：画框 → recorder.add_frame() → output_frame
+    │
+    └── 报警帧：
+         │
+         ├── 保存快照 (JPG, 带框)
+         ├── 启动录像 (2s 预录 + 5s 后录 → FFmpeg H.264)
+         ├── HTTP POST → Java InternalController.alarm/report
+         │       │
+         │       ├── 写入 alarms 表 (audit_status=0)
+         │       ├── 查询设备名
+         │       └── WebSocket → /topic/alarm → 前端弹窗
+         │
+         └── 录像结束后自动闭合文件
+```
+
+### 4.2 AI 数据分析链路
+
+```
+用户在 AiChat.vue 输入 "最近一周报警趋势"
+    │
+    ▼
+Vue fetch() → Java AiChatController.chat/stream (SSE)
+    │
+    ▼
+Java WebClient 透传 → Python web-agent /api/agent/chat/stream
+    │
+    ▼
+AgentService.ask_stream()
+    ├── 从 SQLChatMessageHistory 读取最近 3 轮对话
+    ├── 拼装 enriched_input（历史 + 当前问题）
+    ├── LangChain astream_events 异步流式推理
+    │       ├── Agent 生成 SQL  → sql_db_query 工具
+    │       ├── MySQL ai_reader 账号执行（仅视图）
+    │       └── LLM 综合结果 → 中文分析报告
+    └── 手动写入 ai_chat_history (add_user_message + add_ai_message)
+    │
+    ▼
+SSE 流返回 → Java → Vue fetch ReadableStream 逐 chunk 渲染 Markdown
+```
+
+### 4.3 设备状态同步链路
+
+```
+系统启动 / Java 设备变更:
+    Java DeviceService.updateDevice()
+        → CompletableFuture 异步通知 Python /api/v1/monitor/sync
+        → Python monitor._do_sync()
+            → GET /api/internal/devices (白名单)
+            → 解析设备列表，更新 device_config_cache
+            → StreamManager.update_active_streams()
+                → 新设备: add_camera() → StreamLoader.start() (三线程)
+                → 移除设备: loader.stop() → del
+
+运行时状态上报:
+    StreamLoader._reader_thread
+        → 连接成功: _update_db_status(1)
+        → 连接失败: _update_db_status(0)
+        → HTTP POST → Java /api/monitor/devices/sync-status
+```
 
 ---
 
-## 7. 补充说明 (Implementation Notes)
+## 5. 数据库设计
 
-1. **并发处理方案：**
-* 由于 Python 的 GIL 锁限制，建议使用 **多进程 (Multiprocessing)** 而非多线程来运行 AI 推理模块，以充分利用多核 CPU。每个摄像头作为一个独立的进程运行。
-* Web 服务（Flask）作为主进程，通过 `Queue` 与 AI 进程通信。
+### 5.1 实体关系
 
+```
+users (1) ──< ai_conversations (N)
+users (1) ──< alarms (auditor_id) (N)
+devices (1) ──< alarms (camera_id) (N)
+ai_conversations (1) ──< ai_chat_history (N)  [by session_id]
+```
 
-2. **走廊透视优化：**
-* 在代码中设定 `MIN_BOX_HEIGHT = 50`。当检测到的人体框高度小于 50 像素时，视为距离太远，直接跳过 Stage 2 的分类，避免因像素模糊导致的误报。
+### 5.2 核心表结构
 
+**alarms（报警记录表）**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id | BIGINT PK | 自增主键 |
+| camera_id | INT FK | 关联 devices.id |
+| type | ENUM('SMOKING','FIRE') | 报警类型 |
+| confidence | FLOAT | 置信度 |
+| created_at | DATETIME | 报警时间 |
+| video_url | VARCHAR(255) | 证据视频路径 |
+| roi_url | VARCHAR(255) | 特写图路径 |
+| audit_status | TINYINT | 0-待审核, 1-已确认, 2-误报, 9-已忽略 |
+| auditor_id | INT FK (nullable) | 审核人 ID |
+| audit_time | DATETIME (nullable) | 审核时间 |
+| audit_remark | VARCHAR(255) (nullable) | 审核备注 |
+
+**devices（设备表）**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id | INT PK | 自增主键 |
+| name | VARCHAR(100) | 设备名称 |
+| rtsp_url | VARCHAR(500) | RTSP 流地址 |
+| area_config | JSON (nullable) | ROI 区域配置 |
+| status | INT | 1-在线, 0-离线 |
+| enabled | TINYINT(1) | 1-启用, 0-停用 |
+
+**users（用户表）**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id | INT PK | 自增主键 |
+| username | VARCHAR(50) UNIQUE | 登录账号 |
+| password | VARCHAR(255) | Bcrypt 密文 |
+| role | VARCHAR(20) | 'admin' / 'user' |
+| status | TINYINT | 1-启用, 0-禁用 |
+| last_login_ip | VARCHAR(50) | 最后登录 IP |
+| last_login_time | DATETIME | 最后登录时间 |
+
+### 5.3 AI 视图设计
+
+4 个视图将 alarms / devices / users 三表 JOIN 并预计算聚合指标，为 AI Agent 提供语义层。视图使用 `SQL SECURITY DEFINER` 创建，AI Agent 的 `ai_reader` 账号仅需 `SELECT` + `SHOW VIEW` 权限。
+
+---
+
+## 6. 安全设计
+
+### 6.1 认证与授权
+
+```
+前端请求
+    │
+    ▼
+Spring Security (全部放行，仅做 CORS)
+    │
+    ▼
+JwtInterceptor (拦截 /api/**)
+    ├── 白名单路径直接放行:
+    │     /api/auth/login, /api/internal/**, /api/monitor/devices/sync-status
+    │     /api/alerts/report, /api/monitor/stream/**
+    ├── 验证 Authorization: Bearer <token>
+    │     ├── 有效: 解析 uid → request.setAttribute("uid", uid) → 放行
+    │     └── 无效: 401 JSON 响应
+    │
+    ▼
+前端路由守卫 (router.beforeEach)
+    ├── 未登录 → 重定向 /login
+    ├── 角色不匹配 → 踢回首页 + 错误提示
+    └── 通过 → 放行
+```
+
+### 6.2 数据安全
+
+| 层级 | 措施 | 防护目标 |
+| --- | --- | --- |
+| 视图层 | AI 只能看到 4 个 `ai_*` 视图，看不到 users 等基表 | 防敏感字段泄露 |
+| 账号层 | `ai_reader` 仅 SELECT+SHOW VIEW (视图) + SELECT/INSERT (ai_chat_history) | 防删改操作 |
+| Prompt 层 | System Message 禁止写操作、强制 LIMIT | 防 SQL 注入攻击 |
+| 接口层 | JWT 认证 + 内部白名单 | 防未授权访问 |
+
+---
+
+## 7. 关键技术决策
+
+| 决策 | 选择 | 理由 |
+| --- | --- | --- |
+| AI 检测架构 | 端到端双 YOLO 模型 | 比 Pose+CNN 级联更简单、更准、更快 |
+| 推理设备 | GPU CUDA + FP16 | RTX 3060 上推理延迟从 80ms 降至 10ms |
+| Java/Flask 分工 | Java 管业务，Python 管 AI | 职责清晰；Java 生态更成熟的企业级特性 |
+| 对话记忆方案 | 手动注入历史文本 | 绕过 LangChain `RunnableWithMessageHistory` 的丢失 Bug |
+| WebSocket 方案 | STOMP over SockJS | 浏览器兼容性好，Spring 原生支持 |
+| SSE 占位符 | `<<sp>>`/`<<br>>` | 防止网络中间件裁切空格和换行 |
+| 全局单例 | StreamManager / SmokingDetector | 消除多路并发时的显存溢出 |
+| 视频编码 | FFmpeg H.264 yuv420p + faststart | 保证浏览器兼容性 |
