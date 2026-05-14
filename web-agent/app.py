@@ -7,6 +7,17 @@ settings = get_settings()
 agent_service = AgentService(settings)
 app = Flask(__name__)
 
+# Register MongoDB async logger
+import logging
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / 'web-flask'))
+from app.core.mongo_logger import MongoHandler
+mongo_handler = MongoHandler()
+mongo_handler.set_service("web-agent")
+mongo_handler.setLevel(logging.WARNING)
+logging.getLogger().addHandler(mongo_handler)
+
 
 @app.get("/health")
 def health():

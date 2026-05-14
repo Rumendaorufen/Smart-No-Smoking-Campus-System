@@ -13,9 +13,18 @@ def create_app():
     # 2. 🚀 关键修改：将单例绑定到 app 上
     # 这样在任何路由中通过 current_app.stream_manager 访问的都是同一个实例
     app.stream_manager = stream_manager
-    
+
     # 初始化单例 (如果你的 init_app 内部有逻辑的话)
     stream_manager.init_app(app)
+
+    # 3. 注册 MongoDB 日志
+    from app.core.mongo_logger import MongoHandler
+    import logging
+    mongo_handler = MongoHandler()
+    mongo_handler.set_service("web-flask")
+    mongo_handler.setLevel(logging.WARNING)
+    logging.getLogger().addHandler(mongo_handler)
+    app.mongo_log_handler = mongo_handler
 
     # 3. 注册监控蓝图
     from app.api.monitor import monitor_bp
@@ -24,5 +33,9 @@ def create_app():
     # 4. 注册系统控制蓝图
     from app.api.system import system_bp
     app.register_blueprint(system_bp, url_prefix='/api/v1/system')
+
+    # 5. 注册健康检查蓝图 (供告警引擎使用)
+    from app.api.health import health_bp
+    app.register_blueprint(health_bp, url_prefix='/api/v1')
 
     return app
