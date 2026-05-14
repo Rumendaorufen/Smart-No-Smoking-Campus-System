@@ -52,8 +52,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/api/internal/**",   // 放行 Python 内部调用的接口(建议加 IP 白名单，这里暂且放行)
                                 // 🚀 必须加上这一行，允许 Python 不带 Token 访问
                         "/api/monitor/devices/sync-status",
-                        "/api/alerts/report"
-//                        "/api/ai/**"// 🚀 核心：把我们正在开发的 AI 接口排除掉！
+                        "/api/alerts/report",
+                        "/api/logs/**"
                 );
     }
 }
