@@ -11,8 +11,8 @@ app = Flask(__name__)
 import logging
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'web-flask'))
-from app.core.mongo_logger import MongoHandler
+sys.path.insert(0, str(Path(__file__).parent))
+from mongo_logger import MongoHandler
 mongo_handler = MongoHandler()
 mongo_handler.set_service("web-agent")
 mongo_handler.setLevel(logging.WARNING)
