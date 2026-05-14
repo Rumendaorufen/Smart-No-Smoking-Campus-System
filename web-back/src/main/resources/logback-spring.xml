@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="MONGO" class="org.example.webback.log.MongoAppender">
+        <connectionUri>mongodb://localhost:27017</connectionUri>
+        <databaseName>smart_campus_logs</databaseName>
+        <collectionName>logs</collectionName>
+    </appender>
+
+    <logger name="FrontendLog" level="INFO">
+        <appender-ref ref="MONGO"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="MONGO"/>
+    </root>
+</configuration>
