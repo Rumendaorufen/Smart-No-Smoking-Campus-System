@@ -2,10 +2,13 @@ package org.example.webback.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import java.util.Collections;
 
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
@@ -13,7 +16,17 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public class RestConfig {
         @Bean
         public RestTemplate restTemplate() {
-            return new RestTemplate();
+            RestTemplate rest = new RestTemplate();
+            rest.setInterceptors(Collections.singletonList(
+                (ClientHttpRequestInterceptor) (request, body, execution) -> {
+                    String traceId = org.slf4j.MDC.get("trace_id");
+                    if (traceId != null) {
+                        request.getHeaders().add("X-Trace-Id", traceId);
+                    }
+                    return execution.execute(request, body);
+                }
+            ));
+            return rest;
         }
     }
 

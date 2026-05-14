@@ -47,6 +47,9 @@ public class JwtInterceptor implements HandlerInterceptor {
 
             // ✅ 关键：把 uid 存入 request，Controller 里 @RequestAttribute("uid") 才能拿到
             request.setAttribute("uid", uid);
+
+            // Populate MDC for log context (cleaned up by TraceIdFilter)
+            org.slf4j.MDC.put("user_id", String.valueOf(uid));
             return true; // 放行
         } catch (Exception e) {
             returnAuthError(response, "Token 无效");
