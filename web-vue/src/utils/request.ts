@@ -1,21 +1,24 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '../router'
+import { logCollector } from './logCollector'
 
 // 1. 业务后端 (Java Spring Boot)
 const service = axios.create({
   // 对应 .env 中的 VITE_APP_BASE_API = 'http://localhost:8080'
-  baseURL: import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080', 
+  baseURL: import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080',
   timeout: 5000
 })
 
 // 2. 请求拦截器
 service.interceptors.request.use(
   (config) => {
+    // X-Trace-Id for cross-service request tracing
+    config.headers['X-Trace-Id'] = logCollector.getTraceId()
     const token = localStorage.getItem('token')
     if (token) {
       // Spring Security 标准格式
-      config.headers['Authorization'] = `Bearer ${token}` 
+      config.headers['Authorization'] = `Bearer ${token}`
     }
     return config
   },
