@@ -63,8 +63,8 @@ graph TD
 | 服务 | 端口 | 技术栈 | 核心职责 |
 |------|------|--------|----------|
 | **web-vue** | 5173 | Vue 3 + Element Plus + Pinia + ECharts | 监控大屏、报警仲裁、设备管理、AI 对话 |
-| **web-back** | 8080 | Spring Boot 3 + MyBatis-Plus + WebSocket | 鉴权、业务 CRUD、SSE 代理、设备状态同步 |
-| **web-flask** | 5000 | Flask + YOLOv8 + OpenCV | RTSP 拉流、吸烟检测、证据录制、全局 AI 控制 |
+| **web-back** | 8080 | Spring Boot 3 + MyBatis-Plus + WebSocket | 鉴权、业务 CRUD、SSE 代理、设备状态同步、集中化日志采集 |
+| **web-flask** | 5000 | Flask + YOLOv8 + OpenCV | RTSP 拉流、吸烟检测、证据录制、全局 AI 控制、健康检查 |
 | **web-agent** | 5050 | Flask + LangChain + SQLDatabaseToolkit | 自然语言→SQL→数据分析报告 |
 
 ### AI 推理管线（web-flask）
@@ -117,6 +117,12 @@ RTSP 流 → TCP 握手(单线程解码) → 全局单例检测器
 - 基于 4 个只读视图的安全查询（报警详情/日统计/设备排名/审核统计）
 - 流式 SSE 输出，Markdown 表格和列表渲染
 - 多会话管理，对话历史持久化
+
+### 集中化日志（MongoDB）
+- **MongoAppender**：Java 中台通过 Logback 自定义 Appender 异步写入 MongoDB
+- **MongoHandler**：Python 引擎异步日志写入同一 MongoDB 集合
+- **TraceId 传播**：HTTP 请求头 `X-Trace-Id` 在服务间透传，端到端链路追踪
+- **前端日志**：浏览器日志通过 `POST /api/logs/submit` 采集
 
 ### 系统管控
 - CPU / 内存 / GPU / 磁盘 实时图表（ECharts）
@@ -337,11 +343,16 @@ npm run dev
 | `GET` | `/api/ai/conversations/{id}/messages` | 对话历史 |
 | `GET` | `/api/system/status` | 系统状态（含 AI 开关） |
 | `POST` | `/api/system/control/global_ai_db` | 同步 AI 开关状态 |
+| `GET` | `/actuator/health` | Spring Boot 健康检查（AIOps 监控用） |
+| `GET` | `/actuator/metrics` | 运行时性能指标（AIOps 监控用） |
+| `POST` | `/api/logs/submit` | 前端日志采集 |
 
 ### Python AI 引擎 (5000)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| `GET` | `/api/v1/health` | 服务健康检查（含 GPU 利用率、活跃流数） |
+| `GET` | `/api/v1/metrics` | 实时性能指标（Prometheus 格式） |
 | `GET` | `/api/v1/monitor/stream/{id}` | 视频流 (MJPEG) |
 | `POST` | `/api/v1/monitor/sync` | 触发设备同步 |
 | `GET` | `/api/v1/system/global_ai` | 获取全局 AI 状态 |
