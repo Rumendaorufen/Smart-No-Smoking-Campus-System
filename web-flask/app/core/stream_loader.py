@@ -384,6 +384,18 @@ class StreamLoader:
             f = self.output_frame if self.output_frame is not None else self.latest_frame
             return cv2.resize(f, (1280, 720)) if f is not None else None
 
+    def get_thumbnail(self, target_width=320, target_height=240, quality=60):
+        """返回当前最新帧的缩略图 bytes (JPEG)。"""
+        with self.lock:
+            frame = self.output_frame if self.output_frame is not None else self.latest_frame
+            if frame is None:
+                return None
+            thumb = cv2.resize(frame, (target_width, target_height))
+            ret, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            if ret:
+                return buf.tobytes()
+            return None
+
 class StreamManager:
     def __init__(self):
         self.stream_loaders = {}

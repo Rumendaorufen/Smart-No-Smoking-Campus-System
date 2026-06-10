@@ -144,6 +144,36 @@ def video_feed(device_id):
 
     # 3. 正常输出流
     return Response(
-        local_frame_generator(device_id), 
+        local_frame_generator(device_id),
         mimetype='multipart/x-mixed-replace; boundary=frame'
     )
+
+@monitor_bp.route('/thumbnail/<int:device_id>')
+def thumbnail(device_id):
+    """返回 320x240 JPG 缩略图，供前端网格定时刷新。"""
+    sm = get_sm()
+    if not sm:
+        return "Stream Manager Offline", 503
+
+    if device_id not in device_config_cache:
+        _do_sync()
+
+    config = device_config_cache.get(device_id)
+    if not config:
+        return "Device Not Found", 404
+    if not config.get('enabled'):
+        return "Device Disabled", 403
+
+    loader = sm.stream_loaders.get(device_id)
+    if not loader or not loader.running or loader.latest_frame is None:
+        # 返回 1x1 透明像素占位（避免前端破图）
+        return Response(
+            b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x00\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b',
+            mimetype='image/gif'
+        )
+
+    thumb_bytes = loader.get_thumbnail()
+    if thumb_bytes is None:
+        return "No Frame", 503
+
+    return Response(thumb_bytes, mimetype='image/jpeg')
