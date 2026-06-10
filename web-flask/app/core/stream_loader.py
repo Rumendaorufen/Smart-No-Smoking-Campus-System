@@ -27,8 +27,9 @@ class SmokeEvent:
 
 class StreamLoader:
     # 🚀 证据分级阈值
-    EVIDENCE_VIDEO_THRESHOLD = 0.85    # ≥0.85: 快照 + 视频
-    EVIDENCE_SNAPSHOT_THRESHOLD = 0.65 # 0.65~0.85: 仅快照
+    # 快照无条件保存（报警确认即存）
+    # 视频仅高置信度录制（存储成本高）
+    EVIDENCE_VIDEO_THRESHOLD = 0.85    # ≥0.85: 加录视频
 
     def __init__(self, camera_id: int, rtsp_url: str, app=None):
         self.camera_id = camera_id
@@ -331,13 +332,11 @@ class StreamLoader:
         ts = int(time.time())
         img_name = f"alarm_cam{self.camera_id}__p{owner_id or 'unk'}_{ts}.jpg"
 
-        # 🚀 所有 ≥0.65 的都保存快照
-        snapshot_url = ""
-        if conf >= self.EVIDENCE_SNAPSHOT_THRESHOLD:
-            self.recorder.save_snapshot(frame, img_name)
-            snapshot_url = f"static/evidence/snapshots/{img_name}"
+        # 🚀 报警已确认，无条件保存快照（证据基石）
+        self.recorder.save_snapshot(frame, img_name)
+        snapshot_url = f"static/evidence/snapshots/{img_name}"
 
-        # 🚀 仅 ≥0.85 录制视频
+        # 🚀 仅高置信度 (≥0.85) 录制视频（存储成本高）
         video_url = ""
         if conf >= self.EVIDENCE_VIDEO_THRESHOLD:
             video_name = img_name.replace('.jpg', '.mp4')
