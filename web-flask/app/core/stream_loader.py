@@ -456,10 +456,13 @@ class StreamLoader:
             return cv2.resize(f, (1280, 720)) if f is not None else None
 
     def get_thumbnail(self, target_width=320, target_height=240, quality=60):
-        """返回当前最新帧的缩略图 bytes (JPEG)。"""
+        """返回当前最新帧的缩略图 bytes (JPEG)。信号丢失 >3s 返回 None。"""
         with self.lock:
             frame = self.output_frame if self.output_frame is not None else self.latest_frame
             if frame is None:
+                return None
+            # 🚀 信号丢失超过 3 秒则返回离线占位
+            if time.time() - self.last_read_time > 3.0:
                 return None
             thumb = cv2.resize(frame, (target_width, target_height))
             ret, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, quality])
