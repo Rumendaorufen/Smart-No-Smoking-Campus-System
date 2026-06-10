@@ -10,6 +10,7 @@ from collections import defaultdict
 from app.core.detector import get_detector
 from app.core.recorder import EvidenceRecorder
 from app.core.burst_token import BurstTokenManager
+from app.core.io_throttle import IOThrottle
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -340,30 +341,21 @@ class StreamLoader:
         main_url = self.get_main_stream_url()
 
         def record_video():
-            try:
-                cmd = [
-                    'ffmpeg', '-y',
-                    '-rtsp_transport', 'tcp',
-                    '-i', main_url,
-                    '-vcodec', 'copy',
-                    '-ss', '0',
-                    '-noaccurate_seek',
-                    '-t', '10',
-                    video_path
-                ]
-                CREATE_BELOW_NORMAL = 0x00004000
-                subprocess.run(
-                    cmd,
-                    timeout=15,
-                    creationflags=CREATE_BELOW_NORMAL,
-                    capture_output=True,
-                    text=True
-                )
-                logger.info(f"🎥 FFmpeg 录像完成: {video_name}")
-            except subprocess.TimeoutExpired:
-                logger.error(f"⏰ FFmpeg 录像超时 CID={self.camera_id}，强制终止")
-            except Exception as e:
-                logger.error(f"⚠️ 录像异常: {e}")
+            cmd = [
+                'ffmpeg', '-y',
+                '-rtsp_transport', 'tcp',
+                '-i', main_url,
+                '-vcodec', 'copy',
+                '-ss', '0',
+                '-noaccurate_seek',
+                '-t', '10',
+                video_path
+            ]
+            success = IOThrottle.run_ffmpeg(cmd, timeout=15)
+            if success:
+                logger.info(f"🎥 录像完成: {video_name}")
+            else:
+                logger.warning(f"⚠️ 录像失败或超时: {video_name}")
 
         threading.Thread(target=record_video, daemon=True).start()
 
