@@ -12,13 +12,17 @@ class EvidenceRecorder:
     # 🚀 缓冲超时：队首帧超过此阈值则清空，防止时空错乱
     BUFFER_FLUSH_TIMEOUT = 2.5
 
-    def __init__(self, save_dir="app/static/evidence", fps=25, pre_record_sec=2):
-        self.save_dir = os.path.abspath(save_dir)
+    def __init__(self, save_dir="app/static/evidence", fps=25, pre_record_sec=2,
+                 ram_disk_dir="R:/evidence"):
+        self.save_dir = os.path.abspath(save_dir)        # SSD 长期存储
+        self.ram_disk_dir = ram_disk_dir                 # 内存盘临时存储
         self.fps = fps
         self.pre_record_sec = pre_record_sec
 
         os.makedirs(self.save_dir, exist_ok=True)
         os.makedirs(os.path.join(self.save_dir, "snapshots"), exist_ok=True)
+        os.makedirs(self.ram_disk_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.ram_disk_dir, "snapshots"), exist_ok=True)
 
         # 🚀 改用 deque(maxlen=10)，每帧带时间戳
         self.buffer = deque(maxlen=10)  # type: deque[tuple[float, cv2.Mat]]
@@ -82,7 +86,8 @@ class EvidenceRecorder:
             self.post_record_sec = post_record_sec
             self.record_start_time = time.time()
             
-            self.current_video_path = os.path.join(self.save_dir, filename)
+            # 🚀 路径指向内存盘
+            self.current_video_path = os.path.join(self.ram_disk_dir, filename)
             
             # 使用 mp4v 写入（它是 OpenCV 兼容性最好的本地写入器）
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -118,7 +123,18 @@ class EvidenceRecorder:
 
     def save_snapshot(self, frame, filename):
         if frame is None: return
-        snapshot_dir = os.path.join(self.save_dir, "snapshots")
+        snapshot_dir = os.path.join(self.ram_disk_dir, "snapshots")
         save_path = os.path.join(snapshot_dir, filename)
         cv2.imwrite(save_path, frame)
         return save_path
+
+    def move_to_persistent(self, ram_path: str) -> str:
+        """确诊报警后，将证据从内存盘剪切到 SSD 长期存储。"""
+        if not ram_path or not os.path.exists(ram_path):
+            return ram_path
+        rel_path = os.path.relpath(ram_path, self.ram_disk_dir)
+        persistent_path = os.path.join(self.save_dir, rel_path)
+        os.makedirs(os.path.dirname(persistent_path), exist_ok=True)
+        os.replace(ram_path, persistent_path)
+        logger.info(f"📦 证据移至 SSD: {persistent_path}")
+        return persistent_path
