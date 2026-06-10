@@ -66,7 +66,7 @@ class SmokingDetector:
         # 🚀 两阶段置信度阈值
         # smoke_conf=0.40 所以 trigger 也要同步到 0.40，否则检出被空挡过滤
         self.trigger_threshold = 0.40   # 触发预录（与 smoke_conf 一致）
-        self.confirm_threshold = 0.75   # 确认报警（视环境可调）
+        self.confirm_threshold = 0.60   # 确认报警
         self.trigger_cooldown = 2.0     # 触发后等待确认/取消的秒数
 
     def detect(self, frame):
