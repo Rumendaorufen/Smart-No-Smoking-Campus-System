@@ -11,7 +11,7 @@ spring:
     # 🚨 注意修改数据库名为 smart_campus，并确保 MySQL 里已创建该库
     url: jdbc:mysql://localhost:3308/smart_campus_smoking?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
     username: root
-    password: 123456 # 👈 这里要改！
+    password:  # 👈 这里要改！
 
   # 2. Redis 配置
   data:
