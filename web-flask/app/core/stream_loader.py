@@ -340,7 +340,8 @@ class StreamLoader:
         # 🚀 报警确认即录视频（IOThrottle Semaphore=2 限流 + RAM 盘中转）
         video_url = ""
         video_name = img_name.replace('.jpg', '.mp4')
-        video_path = os.path.join(self.recorder.save_dir, video_name)
+        # 🚀 先写入 RAM 盘，完成后才移到 SSD（防止浏览器读到未写完的文件）
+        ram_video_path = os.path.join(self.recorder.ram_disk_dir, video_name)
         main_url = self._get_main_stream_url()
 
         def record_video():
@@ -352,11 +353,13 @@ class StreamLoader:
                 '-preset', 'superfast',
                 '-pix_fmt', 'yuv420p',
                 '-t', '10',
-                video_path
+                ram_video_path
             ]
             success = IOThrottle.run_ffmpeg(cmd, timeout=30)
             if success:
-                logger.info(f"🎥 录像完成: {video_name}")
+                # 录像完成 → 从 RAM 盘移到 SSD
+                ssd_path = self.recorder.move_to_persistent(ram_video_path)
+                logger.info(f"🎥 录像完成: {ssd_path}")
             else:
                 logger.warning(f"⚠️ 录像失败或超时: {video_name}")
 
