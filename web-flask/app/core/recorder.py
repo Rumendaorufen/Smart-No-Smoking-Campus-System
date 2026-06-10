@@ -97,8 +97,8 @@ class EvidenceRecorder:
             # 🚀 路径指向内存盘
             self.current_video_path = os.path.join(self.ram_disk_dir, filename)
             
-            # 使用 H264 fourcc（浏览器原生支持播放）
-            fourcc = cv2.VideoWriter_fourcc(*'H264')
+            # 使用 mp4v 写入（OpenCV 兼容性最好），录完后 FFmpeg 重编码为 H264
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             self.writer = cv2.VideoWriter(
                 self.current_video_path, fourcc, self.fps, (self.target_w, self.target_h)
             )
@@ -130,9 +130,23 @@ class EvidenceRecorder:
             self.is_recording = False
         if ram_path and self.ram_disk_dir != self.save_dir:
             ssd_path = self.move_to_persistent(ram_path)
-            logger.info(f"🎥 录像完成: {os.path.basename(ssd_path)}")
-        else:
-            logger.info(f"🛑 录制闭合: {os.path.basename(ram_path)}")
+            # 🚀 FFmpeg 重编码 mp4v → H264（浏览器可播放）
+            h264_path = ssd_path.replace('.mp4', '_h264.mp4')
+            cmd = [
+                'ffmpeg', '-y', '-i', ssd_path,
+                '-c:v', 'libx264', '-preset', 'superfast',
+                '-pix_fmt', 'yuv420p',
+                '-c:a', 'none', h264_path
+            ]
+            try:
+                subprocess.run(cmd, timeout=30, capture_output=True)
+                if os.path.exists(h264_path):
+                    os.replace(h264_path, ssd_path)
+                    logger.info(f"🎥 录像完成 (H264): {os.path.basename(ssd_path)}")
+                else:
+                    logger.warning(f"H264 编码失败，保留原文件")
+            except Exception as e:
+                logger.error(f"FFmpeg 重编码异常: {e}")
 
     def save_snapshot(self, frame, filename):
         if frame is None: return
