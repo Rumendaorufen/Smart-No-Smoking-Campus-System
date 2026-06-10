@@ -350,8 +350,6 @@ class StreamLoader:
                 '-rtsp_transport', 'tcp',
                 '-i', main_url,
                 '-c', 'copy',
-                '-f', 'mp4',
-                '-movflags', '+faststart',
                 '-t', '5',
                 ram_video_path
             ]
