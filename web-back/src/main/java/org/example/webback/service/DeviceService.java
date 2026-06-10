@@ -2,11 +2,13 @@ package org.example.webback.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import lombok.Data;
 import org.example.webback.entity.Device;
 import org.example.webback.mapper.DeviceMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -25,6 +27,9 @@ public class DeviceService extends ServiceImpl<DeviceMapper, Device> {
 
     @Autowired
     private RestTemplate restTemplate;
+
+    @Autowired(required = false)
+    private SimpMessagingTemplate messagingTemplate;
 
     // 🚀 批量心跳内存缓存 + 全局版本号
     private final ConcurrentHashMap<Integer, DeviceState> deviceStatusCache = new ConcurrentHashMap<>();
@@ -144,6 +149,7 @@ public class DeviceService extends ServiceImpl<DeviceMapper, Device> {
      * 只更新内存缓存，不写 MySQL
      */
     public void processBatchSync(List<Map<String, Object>> batch) {
+        List<DeviceState> changes = new ArrayList<>();
         for (Map<String, Object> item : batch) {
             Integer id = ((Number) item.get("id")).intValue();
             int status = ((Number) item.get("status")).intValue();
@@ -156,7 +162,13 @@ public class DeviceService extends ServiceImpl<DeviceMapper, Device> {
                 state.setStatus(status);
                 state.setVersion(ver);
                 deviceStatusCache.put(id, state);
+                changes.add(state);
             }
+        }
+
+        // 🚀 有变更时推送给所有前端
+        if (!changes.isEmpty() && messagingTemplate != null) {
+            messagingTemplate.convertAndSend("/topic/device-status", changes);
         }
     }
 

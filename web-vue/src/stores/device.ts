@@ -4,6 +4,8 @@ import deviceApi from '../api/device' // 🚀 确保此文件已定义 getStatus
 import { ElMessage } from 'element-plus'
 import type { StringDecoder } from 'string_decoder'
 import axios from 'axios'
+import SockJS from 'sockjs-client'
+import Stomp from 'stompjs'
 
 const JAVA_BASE = import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080'
 
@@ -29,6 +31,7 @@ export const useDeviceStore = defineStore('device', () => {
   const loading = ref(false)   // 全局加载状态
   const localVersion = ref(0)  // 🚀 增量对账版本号
   let pollTimer: any = null    // 轮询定时器
+  let stompClient: any = null // WebSocket 客户端
 
   // --- Actions ---
 
@@ -145,21 +148,71 @@ const retryConnection = async (id: number) => {
     }
   }
 
-  // 7. 启动轮询
+  // 7. 🚀 WebSocket 订阅设备状态变化
+  const initDeviceStatusWebSocket = () => {
+    const socket = new SockJS(`${JAVA_BASE}/ws`)
+    stompClient = Stomp.over(socket)
+    stompClient.debug = null
+
+    stompClient.connect({}, () => {
+      stompClient.subscribe('/topic/device-status', (message: any) => {
+        const changes = JSON.parse(message.body) as Array<{id: number, status: number, version: number}>
+        for (const change of changes) {
+          const idx = deviceList.value.findIndex(d => d.id === change.id)
+          if (idx !== -1) {
+            deviceList.value[idx].status = change.status
+          }
+          if (change.version > localVersion.value) {
+            localVersion.value = change.version
+          }
+        }
+      })
+    }, () => {
+      // 断线重连 + 全量同步
+      resyncAllDevices()
+      setTimeout(() => initDeviceStatusWebSocket(), 5000)
+    })
+  }
+
+  const disconnectDeviceStatusWebSocket = () => {
+    if (stompClient) {
+      try { stompClient.disconnect(() => {}) } catch(e) {}
+      stompClient = null
+    }
+  }
+
+  const resyncAllDevices = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await axios.get(`${JAVA_BASE}/api/monitor/devices`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.data.code === 200) {
+        deviceList.value = res.data.data
+      }
+    } catch(e) {
+      console.error('Resync failed:', e)
+    }
+  }
+
+  // 8. 启动轮询
   const startPolling = () => {
     if (pollTimer) return
     // 首次全量同步
     fetchDevices(false)
-    // 开启 5 秒一次的增量对账
+    // WebSocket 订阅取代增量轮询
+    initDeviceStatusWebSocket()
+    // 保留 HTTP 增量轮询作为降级
     pollTimer = setInterval(fetchDevicesDelta, 5000)
   }
 
-  // 7. 停止轮询
+  // 8. 停止轮询
   const stopPolling = () => {
     if (pollTimer) {
       clearInterval(pollTimer)
       pollTimer = null
     }
+    disconnectDeviceStatusWebSocket()
   }
 
   // 8. 一键重连
