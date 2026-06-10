@@ -30,7 +30,9 @@
 
 **核心突破**：
 
-- 采用**级联 ROI 检测 + Batch 批处理 + FP16 半精度**，单张 RTX 3060 即可承载多路并发
+- 采用**级联 ROI 检测 + Batch 批处理 + FP16 半精度**，单张 RTX 3060 即可承载 200+ 路并发
+- **弹性跳帧**：平时 2 FPS 推理，爆发时 25 FPS，GPU 算力释放 90%
+- **两阶段置信度**：0.50 触发预录 + 跨帧累计确认，兼顾灵敏度与误报率
 - 引入**大模型 SQL Agent**，用自然语言直接查询报警数据，无需编写 SQL
 - Java 中台统一鉴权与业务编排，Python 专注于 AI 推理，职责清晰
 
@@ -62,50 +64,60 @@ graph TD
 
 | 服务 | 端口 | 技术栈 | 核心职责 |
 |------|------|--------|----------|
-| **web-vue** | 5173 | Vue 3 + Element Plus + Pinia + ECharts | 监控大屏、报警仲裁、设备管理、AI 对话 |
-| **web-back** | 8080 | Spring Boot 3 + MyBatis-Plus + WebSocket | 鉴权、业务 CRUD、SSE 代理、设备状态同步、集中化日志采集 |
-| **web-flask** | 5000 | Flask + YOLOv8 + OpenCV | RTSP 拉流、吸烟检测、证据录制、全局 AI 控制、健康检查 |
-| **web-agent** | 5050 | Flask + LangChain + SQLDatabaseToolkit | 自然语言→SQL→数据分析报告 |
+| **web-vue** | 5173 | Vue 3 + Element Plus + Pinia + ECharts | 监控网格大屏、报警仲裁、设备管理、AI 对话、缩略图网格 |
+| **web-back** | 8080 | Spring Boot 3 + MyBatis-Plus + WebSocket + STOMP | 鉴权、业务 CRUD、SSE 代理、设备状态同步、WebSocket 增量推送、批量心跳接收 |
+| **web-flask** | 5000 | Flask + YOLOv8 + OpenCV | RTSP 拉流(grab/retrieve)、弹性跳帧推理、爆发令牌桶、两阶段置信度、证据录制(RAM→SSD)、缩略图接口、自动重连巡检 |
+| **web-agent** | 5050 | Flask + LangChain + SQLDatabaseToolkit | 自然语言→SQL→数据分析报告（流式 SSE） |
 
 ### AI 推理管线（web-flask）
 
 ```
-RTSP 流 → TCP 握手(单线程解码) → 全局单例检测器
-                                      │
-                    ┌─────────────────┘
-                    ▼
-         Stage 1: YOLOv8s 全局找人 (ByteTrack 追踪)
-                    │
-                    ▼
-         裁切人物上半身 ROI + 30% Padding
-                    │
-                    ▼
-         Batch 打包 → Stage 2: best.pt 找烟 (FP16)
-                    │
-                    ▼
-         惯性追踪防闪烁 (3帧记忆) → 15帧确认报警
-                    │
-                    ▼
-         预录缓冲(2s)+后录(5s) → FFmpeg H.264 → 推送到 Java
+RTSP 流 → grab/retrieve (5 FPS) → 全局单例检测器
+                                          │
+                        ┌─────────────────┘
+                        ▼
+             弹性跳帧 (平时 2 FPS / 爆发 25 FPS)
+                        │
+                        ▼
+             Stage 1: YOLOv8s 全局找人 (ByteTrack)
+                        │
+                        ▼
+             裁切人物上半身 ROI + 30% Padding
+                        │
+                        ▼
+             Batch 打包 → Stage 2: best.pt 找烟 (FP16, conf≥0.50)
+                        │
+                        ▼
+             两阶段置信度 + 爆发令牌桶 (最多 3 路同时爆发)
+                        │
+                        ▼
+             跨帧累计确认 (3次检出 / 1.5s) → 报警
+                        │
+                        ▼
+             快照(R:\→SSD) + 视频(5s, mp4v→H264) → Java
 ```
 
 ## 功能特性
 
 ### 实时监控
-- 多路 RTSP 视频流并发处理，支持 MJPEG 流推送至浏览器
-- 设备在线/离线状态实时检测，掉线自动重连
-- WebSocket 实时推送报警弹窗，设备列表 5 秒轮询
+- 多路 RTSP 视频流并发处理（grab/retrieve，5 FPS）
+- 网格模式（缩略图 JPG 定时刷新 + jitter 打散并发） + 详情模式（单路 MJPEG）
+- 弹性跳帧：平时 2 FPS 推理，爆发时 25 FPS（令牌桶控制，最多 3 路）
+- 设备在线/离线状态实时检测，自动重连巡检（每 30s）
+- WebSocket 实时推送报警弹窗 + 设备状态增量推送
 
 ### AI 吸烟检测
-- 双模型级联检测（YOLOv8s 找人 + best.pt 找烟）
+- 双模型级联检测（YOLOv8s 找人 + best.pt 找烟，conf≥0.50）
 - ByteTrack 人员追踪，支持移动吸烟去重（动态冷却圈）
-- GPU FP16 半精度加速，推理延迟 < 300ms
-- 检测框惯性平滑，消除闪烁
+- 两阶段置信度：单帧 ≥0.60 立即确认 / 同一人持续检出 3 次确认
+- GPU FP16 半精度加速，batch ROI 推理，惯性平滑防闪烁
 
 ### 证据链管理
-- 报警触发时自动保存快照（JPG）和录像（MP4），均带 AI 检测框
-- 2 秒预录缓冲 + 5 秒后录，FFmpeg 自动转码 H.264
-- 已确认违规永久保留，误报 30 天后自动清理
+- 报警确认即无条件保存快照 + 录像（5 秒 H.264）
+- ImDisk 内存盘（R:\) 中转：临时文件纯内存操作，确诊后才迁移到 SSD
+- 3 层 IO 保护：Semaphore(2) 并发限流 + RAM 盘中转 + Below Normal 进程优先级
+- 多路并发录像（`dict` 管理多个 VideoWriter），同一秒多个报警各自录制
+- 自动清理：未确认 7 天删除 / 已确认 90 天删除视频保留快照
 
 ### 报警仲裁（Human-in-the-Loop）
 - 待审核列表卡片式展示，支持确认/误报快速操作
@@ -175,7 +187,11 @@ Smart No-Smoking Campus System/
 │   │   ├── core/
 │   │   │   ├── stream_loader.py   # StreamLoader + StreamManager(全局)
 │   │   │   ├── detector.py        # SmokingDetector (双模型级联+Batch+FP16)
-│   │   │   └── recorder.py        # EvidenceRecorder (预录缓冲+FFmpeg转码)
+│   │   │   ├── recorder.py        # EvidenceRecorder (预录缓冲+并发录像)
+│   │   │   ├── burst_token.py     # 爆发令牌桶 (全局 Semaphore)
+│   │   │   ├── io_throttle.py     # IO 限流 (Semaphore+taskkill)
+│   │   │   ├── worker_manager.py  # 多进程 Worker 管理器
+│   │   │   └── worker_main.py     # Worker 子进程入口
 │   │   ├── api/
 │   │   │   ├── monitor.py         # 视频流/设备同步/点火保护
 │   │   │   └── system.py          # 全局AI开关
@@ -225,7 +241,8 @@ Smart No-Smoking Campus System/
 | Node.js | 16+ | web-vue |
 | MySQL | 8.0 | 业务数据库 |
 | CUDA | 11.8+ (可选) | GPU 推理加速 |
-| FFmpeg | 任意 | 证据视频转码 |
+| FFmpeg | 任意 | 证据视频 H.264 编码（full build 可选） |
+| ImDisk Toolkit | 最新 | 内存盘 R:\（可选，无则自动回退 SSD） |
 
 ### 1. 数据库初始化
 
@@ -329,7 +346,9 @@ npm run dev
 | `POST` | `/api/monitor/devices` | 添加设备（admin） |
 | `PUT` | `/api/monitor/devices/{id}` | 更新设备（admin） |
 | `DELETE` | `/api/monitor/devices/{id}` | 删除设备（admin） |
-| `POST` | `/api/monitor/devices/sync-status` | Python 状态同步（内部） |
+| `POST` | `/api/monitor/devices/sync-status` | Python 状态同步（内部，旧） |
+| `POST` | `/api/monitor/devices/batch-sync` | Python 批量心跳（每 3s） |
+| `GET` | `/api/monitor/devices/delta` | 增量对账接口（带 version 参数） |
 | `GET` | `/api/internal/devices` | 设备列表（内部白名单） |
 | `POST` | `/api/internal/alarm/report` | 报警上报（内部） |
 | `GET` | `/api/alerts/pending` | 待审核报警 |
@@ -354,6 +373,7 @@ npm run dev
 | `GET` | `/api/v1/health` | 服务健康检查（含 GPU 利用率、活跃流数） |
 | `GET` | `/api/v1/metrics` | 实时性能指标（Prometheus 格式） |
 | `GET` | `/api/v1/monitor/stream/{id}` | 视频流 (MJPEG) |
+| `GET` | `/api/v1/monitor/thumbnail/{id}` | 缩略图 (320x240 JPG) |
 | `POST` | `/api/v1/monitor/sync` | 触发设备同步 |
 | `GET` | `/api/v1/system/global_ai` | 获取全局 AI 状态 |
 | `POST` | `/api/v1/system/global_ai` | 设置全局 AI 开关 |
@@ -405,6 +425,8 @@ AI Agent 使用专用账号 `ai_reader`，仅拥有 4 个视图的 `SELECT` + `S
 | [web-agent 安全加固](development%20log/web-agent%20测试与数据库权限加固.md) | 最小权限、视图隔离、三层防注入 |
 | [web-agent 流式输出](development%20log/web-agent流式输出.md) | SSE 断包/空格裁切/异步生命周期 排查与修复 |
 | [历史记录测试](development%20log/历史记录列表测试.md) | 对话记忆架构升级：手动注入法绕过 LangChain 黑盒 |
+| [200 路升级分析](development%20log/200路升级问题分析.md) | 11 个核心痛点分析及根因链路 |
+| [200 路升级记录](development%20log/200路升级记录-2026-06-10.md) | 三阶段升级方案、性能指标对比、运行时参数 |
 
 ## 开源协议
 
