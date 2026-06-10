@@ -779,8 +779,12 @@ const viewFullScreen = (id: number) => {
   flex-direction: column;
   overflow: hidden;
 }
-.device-tree :deep(.el-tree) {
-  background: transparent;
+.device-tree :deep(.el-tree),
+.device-tree :deep(.el-tree__empty-block),
+.device-tree :deep(.el-tree-node__content),
+.device-tree :deep(.el-tree-node__expand-icon),
+.device-tree :deep(.el-tree-node__label) {
+  background: transparent !important;
   color: #a3a6ad;
   font-size: 13px;
 }
