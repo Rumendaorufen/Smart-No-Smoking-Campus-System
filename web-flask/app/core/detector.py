@@ -45,11 +45,10 @@ class SmokingDetector:
         self.person_conf = 0.30
         
         # 烟头检测参数
-        # 🚀 smoke_conf 降至 0.40（恢复最初的低门槛设置）
-        # YOLO 输出更多候选，由上层 _handle_two_stage_alarm 的两阶段置信度
-        # （0.55 触发预录 / 0.80 确认报警）做最终过滤
+        # 🚀 smoke_conf 升至 0.60，减少低置信度误报
+        # 两阶段置信度的 trigger_threshold 仍保持 0.40 接收所有检出
         self.smoke_imgsz = 640
-        self.smoke_conf = 0.40
+        self.smoke_conf = 0.60
 
         self.max_persons_per_frame = 5 
         
