@@ -343,8 +343,6 @@ class StreamLoader:
                 with self.lock:
                     self.reconnect_requested = True
             time.sleep(1)
-                    self.reconnect_requested = True
-            time.sleep(1)
 
     def start(self):
         with self.start_lock:
