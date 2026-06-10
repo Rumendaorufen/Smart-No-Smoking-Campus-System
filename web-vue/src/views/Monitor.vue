@@ -433,30 +433,17 @@ watch(deviceSearch, (val) => {
 })
 
 const deviceTreeData = computed(() => {
-  // 三级树状：教学楼 → 楼层 → 摄像头
-  const groups: Record<string, any> = {}
-  for (const d of filteredDevices.value) {
-    const building = d.location?.building || '未分组'
-    const floor = d.location?.floor || ''
-    const groupKey = `${building}-${floor}`
-    if (!groups[groupKey]) {
-      groups[groupKey] = {
-        id: `group_${groupKey}`,
-        label: floor ? `${building} ${floor}层` : building,
-        type: 'group',
-        children: []
-      }
-    }
-    groups[groupKey].children.push({
+  // 平铺设备列表，按 ID 排序
+  return filteredDevices.value
+    .sort((a, b) => a.id - b.id)
+    .map(d => ({
       id: d.id,
       label: d.name,
       type: 'device',
       status: d.status,
       isAlarm: !!alarmState.value[d.id],
       _device: d
-    })
-  }
-  return Object.values(groups)
+    }))
 })
 
 const enterDetail = (device: any) => {
