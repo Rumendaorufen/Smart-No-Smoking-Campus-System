@@ -103,12 +103,15 @@ class StreamLoader:
         RETRIEVE_INTERVAL = 0.2  # 200ms → 5 FPS
 
         while self.running:
-            if not self.running:
-                break
+            # 在锁下检查 reconnect_requested，避免与 watchdog 线程的数据竞争
+            needs_reconnect = False
+            with self.lock:
+                needs_reconnect = self.reconnect_requested
 
-            if not self.cap or not self.cap.isOpened() or self.reconnect_requested:
+            if not self.cap or not self.cap.isOpened() or needs_reconnect:
                 if self._connect():
-                    self.reconnect_requested = False
+                    with self.lock:
+                        self.reconnect_requested = False
                     last_retrieve_time = time.time()
                 else:
                     self._update_db_status(0)
@@ -132,7 +135,8 @@ class StreamLoader:
                         if self.running:
                             logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失")
                             self._update_db_status(0)
-                            self.reconnect_requested = True
+                            with self.lock:
+                                self.reconnect_requested = True
                         time.sleep(1)
                 elif not grabbed:
                     time.sleep(0.01)
@@ -250,7 +254,8 @@ class StreamLoader:
                     "snapshotUrl": f"static/evidence/snapshots/{img_name}", "videoUrl": f"static/evidence/{video_name}",
                     "personId": owner_id, "description": f"人员{owner_id or '未知'}吸烟"
                 }, timeout=3)
-            except: pass
+            except Exception as e:
+                logger.error(f"Java 中台上报失败 CID={self.camera_id}: {e}")
         threading.Thread(target=notify_java, daemon=True).start()
 
     def _draw_ui(self, frame, detections):
@@ -279,10 +284,16 @@ class StreamLoader:
 
     def _watchdog_thread(self):
         while self.running:
-            if time.time() - self.last_read_time > 5.0:
-                if not self.reconnect_requested:
-                    logger.warning(f"🚨 Cam {self.camera_id} 超时卡死，标记离线")
-                    self._update_db_status(0)
+            with self.lock:
+                time_since_read = time.time() - self.last_read_time
+                already_reconnecting = self.reconnect_requested
+
+            if time_since_read > 5.0 and not already_reconnecting:
+                logger.warning(f"🚨 Cam {self.camera_id} 超时卡死，标记离线")
+                self._update_db_status(0)
+                with self.lock:
+                    self.reconnect_requested = True
+            time.sleep(1)
                     self.reconnect_requested = True
             time.sleep(1)
 

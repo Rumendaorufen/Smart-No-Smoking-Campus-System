@@ -9,6 +9,9 @@ from collections import deque
 logger = logging.getLogger(__name__)
 
 class EvidenceRecorder:
+    # 🚀 缓冲超时：队首帧超过此阈值则清空，防止时空错乱
+    BUFFER_FLUSH_TIMEOUT = 2.5
+
     def __init__(self, save_dir="app/static/evidence", fps=25, pre_record_sec=2):
         self.save_dir = os.path.abspath(save_dir)
         self.fps = fps
@@ -18,7 +21,7 @@ class EvidenceRecorder:
         os.makedirs(os.path.join(self.save_dir, "snapshots"), exist_ok=True)
 
         # 🚀 改用 deque(maxlen=10)，每帧带时间戳
-        self.buffer: deque[tuple[float, cv2.Mat]] = deque(maxlen=10)
+        self.buffer = deque(maxlen=10)  # type: deque[tuple[float, cv2.Mat]]
 
         self.is_recording = False
         self.writer = None
@@ -40,7 +43,7 @@ class EvidenceRecorder:
             now = time.time()
 
             # 🚀 2.5s 超时清空：如果队首帧时间戳太旧，说明发生了卡顿或断流
-            if self.buffer and (now - self.buffer[0][0]) > 2.5:
+            if self.buffer and (now - self.buffer[0][0]) > EvidenceRecorder.BUFFER_FLUSH_TIMEOUT:
                 self.buffer.clear()
                 logger.warning("🧹 Buffer 超时清空：防止时空错乱")
 
