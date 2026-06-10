@@ -135,19 +135,19 @@
             :key="device.id"
             class="grid-cell"
             :class="{
-              'offline': device.status !== 1 || !device.enabled,
+              'offline': device.status !== 1 || !device.enabled || device.isVideoError,
               'is-alarm': alarmState[device.id]
             }"
             @dblclick="enterDetail(device)"
           >
             <div class="cell-header">
               <span class="cell-name">{{ device.name }}</span>
-              <span class="cell-status" :class="device.status === 1 ? 'online' : 'offline'">
+              <span class="cell-status" :class="(device.status === 1 && !device.isVideoError) ? 'online' : 'offline'">
                 {{ device.status === 1 ? 'LIVE' : 'OFF' }}
               </span>
             </div>
             <img
-              v-if="device.status === 1 && device.enabled"
+              v-if="device.status === 1 && device.enabled && !device.isVideoError"
               :src="getThumbnailUrl(device.id)"
               class="cell-thumb"
               @error="onThumbError($event, device.id)"
@@ -366,8 +366,8 @@ const getStreamUrl = (id: number) => `${AI_API}/api/v1/monitor/stream/${id}?v=${
 const currentUser = JSON.parse(localStorage.getItem('userInfo') || '{}')
 const isAdmin = computed(() => currentUser.role === 'admin')
 const username = computed(() => currentUser.username || 'Admin')
-const onlineCount = computed(() => deviceList.value.filter(d => d.enabled && d.status === 1).length)
-const offlineCount = computed(() => deviceList.value.filter(d => !d.enabled || d.status !== 1).length)
+const onlineCount = computed(() => deviceList.value.filter(d => d.enabled && d.status === 1 && !d.isVideoError).length)
+const offlineCount = computed(() => deviceList.value.filter(d => !d.enabled || d.status !== 1 || d.isVideoError).length)
 
 // 🚀 视图模式
 const viewMode = ref<'grid' | 'detail'>('grid')
@@ -491,10 +491,17 @@ const refreshDevices = () => deviceStore.fetchDevices()
 const handleReconnectAll = () => deviceStore.reconnectAll()
 
 const handleVideoError = (id: number) => {
-    deviceStore.updateDeviceState(id, { 
-        isVideoError: true, 
-        isLoading: false 
+    deviceStore.updateDeviceState(id, {
+        isVideoError: true,
+        isLoading: false
     })
+    // 🚀 3 秒后自动重试
+    setTimeout(() => {
+        const dev = deviceList.value.find(d => d.id === id)
+        if (dev && dev.enabled) {
+            deviceStore.retryConnection(id)
+        }
+    }, 3000)
 }
 
 const handleVideoLoaded = (id: number) => {
