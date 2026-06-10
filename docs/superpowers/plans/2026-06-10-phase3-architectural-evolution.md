@@ -156,10 +156,13 @@ import multiprocessing
 import builtins
 
 def worker_main(worker_id: int, camera_ids: list[int],
-                gpu_device: str, alarm_queue: multipotocol.Queue):
+                gpu_device: str, alarm_queue: multiprocessing.Queue):
     """
     Worker 子进程主函数。
     启动后绑定 GPU，创建自己的 StreamManager 并启动指定 camera_ids 的流。
+
+    🚀 Worker 为纯推理进程，不发起任何 HTTP 网络请求。
+    所有报警事件通过 alarm_queue 上报给 Master 统一转发。
     """
     # 🚀 绑定指定 GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_device
@@ -170,6 +173,13 @@ def worker_main(worker_id: int, camera_ids: list[int],
     sm = StreamManager()
     builtins.GLOBAL_STREAM_MANAGER = sm
 
+    # 🚀 将 alarm_queue 注入到每个 StreamLoader 的 _trigger_alarm_save 中
+    # 当 Worker 内触发报警时，只做：
+    #   1. 快照/录像写入 ImDisk 内存盘
+    #   2. 将报警字典通过 alarm_queue.put(payload) 发送
+    # 绝不调用 requests.post (由 Master 集中上报，防双重上报防网络卡顿)
+    sm.set_alarm_queue(alarm_queue)
+
     # 启动分配到的摄像头
     for cid in camera_ids:
         # 从共享状态获取 RTSP URL（通过 multiprocessing.Manager 或共享 dict）
@@ -177,7 +187,7 @@ def worker_main(worker_id: int, camera_ids: list[int],
         if url:
             sm.add_camera(cid, url)
 
-    # 持续运行，报警事件通过 alarm_queue 上报 Master
+    # 持续运行
     while True:
         # 检查 queue 是否有 Master 指令（增删摄像头、切换 AI 开关等）
         time.sleep(1)
@@ -265,24 +275,39 @@ class WorkerManager:
             while True:
                 try:
                     alarm = self.alarm_queue.get(timeout=1)
-                    # 由 Master 转发到 Java 中台
-                    self._relay_alarm(alarm)
+                    # 🚀 Master 统一处理：先迁移证据到 SSD，再转发 Java
+                    self._handle_alarm(alarm)
                 except Exception:
                     pass
         t = threading.Thread(target=consumer, daemon=True)
         t.start()
 
-    def _relay_alarm(self, alarm: dict):
-        """转发报警事件到 Java。"""
+    def _handle_alarm(self, alarm: dict):
+        """
+        Master 统一处理报警事件。
+        - 将证据从 ImDisk 内存盘剪切到 SSD（受 IOThrottle 限流）
+        - 单点转发给 Java 中台（消除双重上报）
+        """
+        # 1. 迁移证据到 SSD
+        ram_path = alarm.get("ram_evidence_path")
+        if ram_path:
+            try:
+                from app.core.recorder import move_to_persistent
+                move_to_persistent(ram_path)
+            except Exception as e:
+                logger.error(f"证据迁移失败: {e}")
+
+        # 2. 单点转发 Java（只有 Master 做这件事）
         import requests
         try:
             requests.post(
                 "http://localhost:8080/api/alerts/report",
-                json=alarm,
+                json=alarm.get("java_payload", {}),
                 timeout=3
             )
-        except Exception:
-            pass
+        except Exception as e:
+            # 🚀 Master 层记录失败日志，可据此实现重试队列
+            logger.error(f"Java 中台上报失败: {e}")
 
     def stop(self):
         """停止所有 Worker。"""
@@ -293,27 +318,50 @@ class WorkerManager:
         logger.info("🛑 所有 Worker 已终止")
 ```
 
-- [ ] **Step 3: 修改 Flask 启动入口**
+- [ ] **Step 3: 修改 Flask 启动入口（⚠️ Windows spawn 安全结构）**
 
 ```python
-# web-flask/app/__init__.py — 在 create_app 中
-
-from app.core.worker_manager import WorkerManager
+# web-flask/app/__init__.py — create_app 中不启动 Worker
 
 def create_app():
     app = Flask(__name__)
-    # ... 现有初始化代码 ...
-
-    # 🚀 启动 Worker 管理器（仅 Master 进程执行）
-    if os.environ.get("WORKER_MODE") != "worker":
-        worker_mgr = WorkerManager()
-        worker_mgr.start()
-        app.worker_manager = worker_mgr
-
-    # ... 注册蓝图 ...
+    # ... 现有初始化代码（注册蓝图、配置等）...
     app.register_blueprint(monitor_bp, url_prefix='/api/v1/monitor')
-
     return app
+```
+
+```python
+# web-flask/app.py 或 web-flask/run.py — 主进程入口
+
+"""
+🚀 Windows 多进程安全启动结构。
+
+⚠️ 关键约束：
+1. WorkerManager 的初始化必须在 if __name__ == '__main__' 块内，
+   绝不能放在 create_app() 中。Windows 的 spawn 机制会重新运行
+   模块顶级代码，如果在 create_app 中启动 Workers，子进程会递归
+   衍生孙子进程，导致进程爆炸。
+
+2. app.run() 必须关闭 debug 和 reloader：
+   debug=True 会启用 Werkzeug reloader，它在 Windows 下会触发
+   二次 spawn，同样导致多进程混乱。
+"""
+
+from app import create_app
+from app.core.worker_manager import WorkerManager
+
+app = create_app()
+
+if __name__ == '__main__':
+    # 🚀 只有真正的顶级主进程入口才衍生 Worker
+    # 子进程被 spawn 时不会进入此分支，完美免疫递归爆炸
+    print("[Master] 正在初始化多进程视觉分片引擎...")
+    worker_mgr = WorkerManager(camera_count=200, workers_per_gpu=4)
+    worker_mgr.start()
+
+    # 🚀 启动 Flask Master Web 服务
+    # debug=False + use_reloader=False 防止 Windows 二次 spawn
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 ```
 
 - [ ] **Step 4: Commit**
@@ -517,6 +565,21 @@ import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 
 // 🚀 替换 scrollbarRef 为 scrollerRef
 const scrollerRef = ref<any>(null)
+
+// 🚀 消息 ID 生成器（vue-virtual-scroller 要求每个 item 必须有唯一 id）
+let msgIdCounter = 0
+const genMsgId = () => `msg_${Date.now()}_${++msgIdCounter}`
+
+// --------------------------------------------------
+// 🚀 重要：修改所有 messageList.value.push() 调用点，
+// 强制每条消息携带唯一 id：
+//
+// messageList.value.push({
+//   id: genMsgId(),  // <-- 虚拟滚动保命 id
+//   role: 'user',
+//   content: trimmedText
+// })
+// --------------------------------------------------
 
 const scrollToBottom = async () => {
   await nextTick()
