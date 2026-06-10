@@ -97,8 +97,8 @@ class EvidenceRecorder:
             # 🚀 路径指向内存盘
             self.current_video_path = os.path.join(self.ram_disk_dir, filename)
             
-            # 使用 mp4v 写入（它是 OpenCV 兼容性最好的本地写入器）
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            # 使用 H264 fourcc（浏览器原生支持播放）
+            fourcc = cv2.VideoWriter_fourcc(*'H264')
             self.writer = cv2.VideoWriter(
                 self.current_video_path, fourcc, self.fps, (self.target_w, self.target_h)
             )
