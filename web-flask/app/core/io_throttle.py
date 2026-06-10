@@ -81,7 +81,7 @@ class IOThrottle:
             process.wait(timeout=timeout)
             if process.returncode != 0:
                 err = process.stderr.read().decode('utf-8', errors='replace') if process.stderr else ''
-                logger.error(f"FFmpeg 失败 (rc={process.returncode}): {err[:200]}")
+                logger.error(f"FFmpeg 失败 (rc={process.returncode}): {err[:2000]}")
             return process.returncode == 0
 
         except subprocess.TimeoutExpired:

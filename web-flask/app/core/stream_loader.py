@@ -349,7 +349,6 @@ class StreamLoader:
             cmd = [
                 'ffmpeg', '-y',
                 '-rtsp_transport', 'tcp',
-                '-stimeout', '5000000',
                 '-i', main_url,
                 '-c', 'copy',
                 '-t', '5',
