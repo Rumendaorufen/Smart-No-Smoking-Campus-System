@@ -35,40 +35,42 @@ class EvidenceRecorder:
         # 🚀 改用 deque(maxlen=10)，每帧带时间戳
         self.buffer = deque(maxlen=10)  # type: deque[tuple[float, cv2.Mat]]
 
-        self.is_recording = False
-        self.writer = None
-        self.current_video_path = None
-        self.record_start_time = 0
-        self.post_record_sec = 0
-        
-        # 🚀 初始锚点（必须与 VideoWriter 一致）
+        # 🚀 多路并发录像：filename -> RecordingState
+        self.recordings: dict[str, dict] = {}
+
+        # 🚀 初始锚点
         self.target_w = 640
         self.target_h = 480
-        
-        self.lock = threading.Lock() 
+
+        self.lock = threading.Lock()
+
+    def _write_to_active_recordings(self, frame_resized):
+        """写入所有进行中的录像，检查超时自动闭合。"""
+        expired = []
+        for name, rec in self.recordings.items():
+            try:
+                rec['writer'].write(frame_resized)
+            except Exception as e:
+                logger.error(f"写入 {name} 失败: {e}")
+                expired.append(name)
+                continue
+            if time.time() - rec['start_time'] > rec['post_sec']:
+                expired.append(name)
+        for name in expired:
+            self._finalize_recording(name)
 
     def add_frame(self, frame):
         if frame is None: return
-
         with self.lock:
             frame_resized = cv2.resize(frame, (self.target_w, self.target_h))
             now = time.time()
-
-            # 🚀 2.5s 超时清空：如果队首帧时间戳太旧，说明发生了卡顿或断流
             if self.buffer and (now - self.buffer[0][0]) > EvidenceRecorder.BUFFER_FLUSH_TIMEOUT:
                 self.buffer.clear()
                 logger.warning("🧹 Buffer 超时清空：防止时空错乱")
-
             self.buffer.append((now, frame_resized.copy()))
-
-            if self.is_recording and self.writer:
-                try:
-                    self.writer.write(frame_resized)
-                except Exception as e:
-                    logger.error(f"写入视频帧失败: {e}")
+            self._write_to_active_recordings(frame_resized)
 
     def add_frame_no_detect(self, frame):
-        """Processor 跳过推理时仍将帧写入 buffer（保证录像连贯性）"""
         if frame is None: return
         with self.lock:
             frame_resized = cv2.resize(frame, (self.target_w, self.target_h))
@@ -76,59 +78,69 @@ class EvidenceRecorder:
             if self.buffer and (now - self.buffer[0][0]) > EvidenceRecorder.BUFFER_FLUSH_TIMEOUT:
                 self.buffer.clear()
             self.buffer.append((now, frame_resized.copy()))
-            if self.is_recording and self.writer:
-                try:
-                    self.writer.write(frame_resized)
-                except Exception as e:
-                    logger.error(f"写入视频帧失败: {e}")
+            self._write_to_active_recordings(frame_resized)
 
     def start_recording(self, filename, post_record_sec=5, width=640, height=480):
         with self.lock:
-            if self.is_recording:
-                return self.current_video_path
+            if filename in self.recordings:
+                return self.recordings[filename]['path']
 
-            # 🚀 记录本次录像的法定尺寸
-            self.target_w = width
-            self.target_h = height
-            self.is_recording = True
-            self.post_record_sec = post_record_sec
-            self.record_start_time = time.time()
-            
-            # 🚀 路径指向内存盘
-            self.current_video_path = os.path.join(self.ram_disk_dir, filename)
-            
-            # 使用 mp4v 写入（OpenCV 兼容性最好），录完后 FFmpeg 重编码为 H264
+            video_path = os.path.join(self.ram_disk_dir, filename)
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            self.writer = cv2.VideoWriter(
-                self.current_video_path, fourcc, self.fps, (self.target_w, self.target_h)
-            )
-            
-            # 🚀 从 deque 取出历史帧作为视频开头（证据拼接）
+            writer = cv2.VideoWriter(video_path, fourcc, self.fps, (self.target_w, self.target_h))
+
+            # 写入缓冲历史帧
             for ts, f in self.buffer:
                 if f.shape[1] != self.target_w or f.shape[0] != self.target_h:
                     f = cv2.resize(f, (self.target_w, self.target_h))
-                self.writer.write(f)
+                writer.write(f)
 
-            logger.info(f"🎥 录制物理启动: {filename} ({width}x{height}), 含 {len(self.buffer)} 帧历史")
-            return self.current_video_path
+            self.recordings[filename] = {
+                'writer': writer,
+                'path': video_path,
+                'start_time': time.time(),
+                'post_sec': post_record_sec,
+            }
+            logger.info(f"🎥 录像启动: {filename} ({len(self.recordings)} 路并发)")
+            return video_path
+
+    def _finalize_recording(self, filename):
+        """关闭录像文件，迁移到 SSD，重编码为 H264。"""
+        rec = self.recordings.pop(filename, None)
+        if not rec:
+            return
+        ram_path = rec['path']
+        try:
+            rec['writer'].release()
+        except Exception as e:
+            logger.error(f"释放录像 {filename} 异常: {e}")
+            return
+        if ram_path and self.ram_disk_dir != self.save_dir and os.path.exists(ram_path):
+            ssd_path = self.move_to_persistent(ram_path)
+            h264_path = ssd_path.replace('.mp4', '_h264.mp4')
+            cmd = [
+                'ffmpeg', '-y', '-i', ssd_path,
+                '-c:v', 'libx264', '-preset', 'superfast',
+                '-pix_fmt', 'yuv420p',
+                '-c:a', 'none', h264_path
+            ]
+            try:
+                subprocess.run(cmd, timeout=30, capture_output=True)
+                if os.path.exists(h264_path):
+                    os.replace(h264_path, ssd_path)
+                    logger.info(f"🎥 录像完成 (H264): {os.path.basename(ssd_path)}")
+                else:
+                    logger.warning(f"H264 编码失败，保留原文件")
+            except Exception as e:
+                logger.error(f"FFmpeg 重编码异常: {e}")
 
     def process_recording(self, frame=None):
-        """在 StreamLoader 的循环中被调用"""
-        if self.is_recording:
-            # 录制时长到了（当前时间 > 开始时间 + 持续时间）
-            if time.time() - self.record_start_time > self.post_record_sec:
-                logger.info("⏰ 录制时长已到，执行同步闭合...")
-                self.stop_recording() # 🚀 改为同步调用，确保 release 先执行
-
-    def stop_recording(self):
+        """由 Processor 线程定期调用，检查超时。"""
         with self.lock:
-            if not self.is_recording or self.writer is None:
-                return
-            ram_path = self.current_video_path
-            self.writer.release()
-            self.writer = None
-            self.is_recording = False
-        if ram_path and self.ram_disk_dir != self.save_dir:
+            expired = [name for name, rec in self.recordings.items()
+                       if time.time() - rec['start_time'] > rec['post_sec']]
+        for name in expired:
+            self._finalize_recording(name)
             ssd_path = self.move_to_persistent(ram_path)
             # 🚀 FFmpeg 重编码 mp4v → H264（浏览器可播放）
             h264_path = ssd_path.replace('.mp4', '_h264.mp4')
