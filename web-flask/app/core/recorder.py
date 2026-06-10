@@ -4,6 +4,7 @@ import time
 import threading
 import subprocess
 import logging
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -12,13 +13,13 @@ class EvidenceRecorder:
         self.save_dir = os.path.abspath(save_dir)
         self.fps = fps
         self.pre_record_sec = pre_record_sec
-        
+
         os.makedirs(self.save_dir, exist_ok=True)
         os.makedirs(os.path.join(self.save_dir, "snapshots"), exist_ok=True)
-        
-        self.buffer = [] 
-        self.max_buffer_size = fps * pre_record_sec
-        
+
+        # 🚀 改用 deque(maxlen=10)，每帧带时间戳
+        self.buffer: deque[tuple[float, cv2.Mat]] = deque(maxlen=10)
+
         self.is_recording = False
         self.writer = None
         self.current_video_path = None
@@ -33,17 +34,18 @@ class EvidenceRecorder:
 
     def add_frame(self, frame):
         if frame is None: return
-        
+
         with self.lock:
-            # 1. 先进行物理对齐，确保存入缓冲区和写入文件的尺寸一致
-            # 🚀 关键：如果 VideoWriter 是 640x480，每一帧都必须 resize 过去
             frame_resized = cv2.resize(frame, (self.target_w, self.target_h))
-            
-            self.buffer.append(frame_resized.copy())
-            if len(self.buffer) > self.max_buffer_size:
-                self.buffer.pop(0)
-            
-            # 2. 写入文件
+            now = time.time()
+
+            # 🚀 2.5s 超时清空：如果队首帧时间戳太旧，说明发生了卡顿或断流
+            if self.buffer and (now - self.buffer[0][0]) > 2.5:
+                self.buffer.clear()
+                logger.warning("🧹 Buffer 超时清空：防止时空错乱")
+
+            self.buffer.append((now, frame_resized.copy()))
+
             if self.is_recording and self.writer:
                 try:
                     self.writer.write(frame_resized)
@@ -70,14 +72,13 @@ class EvidenceRecorder:
                 self.current_video_path, fourcc, self.fps, (self.target_w, self.target_h)
             )
             
-            # 将缓冲区内的历史帧写入
-            for f in self.buffer:
-                # 再次确认尺寸一致性
+            # 🚀 从 deque 取出历史帧作为视频开头（证据拼接）
+            for ts, f in self.buffer:
                 if f.shape[1] != self.target_w or f.shape[0] != self.target_h:
                     f = cv2.resize(f, (self.target_w, self.target_h))
                 self.writer.write(f)
-                
-            logger.info(f"🎥 录制物理启动: {filename} ({width}x{height})")
+
+            logger.info(f"🎥 录制物理启动: {filename} ({width}x{height}), 含 {len(self.buffer)} 帧历史")
             return self.current_video_path
 
     def process_recording(self, frame=None):

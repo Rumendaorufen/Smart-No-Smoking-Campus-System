@@ -98,31 +98,44 @@ class StreamLoader:
             return False
 
     def _reader_thread(self):
+        """🚀 改造：grab() 高频清空缓冲区 + 每 200ms retrieve() 一次，防止 OpenCV 老化延迟"""
+        last_retrieve_time = 0
+        RETRIEVE_INTERVAL = 0.2  # 200ms → 5 FPS
+
         while self.running:
-            # 🚀 增加判断：如果已经被外部 stop 了，直接退出
-            if not self.running: break
-            
+            if not self.running:
+                break
+
             if not self.cap or not self.cap.isOpened() or self.reconnect_requested:
-                if self._connect(): 
+                if self._connect():
                     self.reconnect_requested = False
+                    last_retrieve_time = time.time()
                 else:
                     self._update_db_status(0)
-                    time.sleep(2); continue
+                    time.sleep(2)
+                    continue
 
             try:
-                # 再次确认
-                if self.cap and self.cap.isOpened():
-                    ret, frame = self.cap.read()
+                # 1. 高频 grab() — 清空 OpenCV 内部缓冲区，防止老化延迟
+                grabbed = self.cap.grab()
+                now = time.time()
+
+                # 2. 每 200ms 才 retrieve — 输出 ~5 FPS 子码流
+                if grabbed and (now - last_retrieve_time >= RETRIEVE_INTERVAL):
+                    ret, frame = self.cap.retrieve()
                     if ret and frame is not None:
+                        last_retrieve_time = now
                         with self.lock:
                             self.latest_frame = frame
-                            self.last_read_time = time.time()
+                            self.last_read_time = now
                     else:
-                        if self.running: # 只有在预期运行中丢失信号才报警
+                        if self.running:
                             logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失")
                             self._update_db_status(0)
                             self.reconnect_requested = True
                         time.sleep(1)
+                elif not grabbed:
+                    time.sleep(0.01)
             except Exception as e:
                 logger.debug(f"读取线程退出捕获: {e}")
                 break
