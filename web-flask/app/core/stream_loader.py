@@ -41,8 +41,9 @@ class StreamLoader:
         self.last_read_time = time.time()
         
         self.smoke_events = defaultdict(SmokeEvent)
-        self.alarm_threshold_frames = 15 
-        self.lost_timeout = 2.0         
+        # 🚀 检测频率从 25fps 降到 2fps，累计帧数同步从 15 降到 3
+        self.alarm_threshold_frames = 3
+        self.lost_timeout = 2.0
         self.active_cooldowns = {}      
         self.alarm_cooldown = 300.0     
         self.alarm_radius = 200         
@@ -202,7 +203,16 @@ class StreamLoader:
 
     def _handle_two_stage_alarm(self, frame, detections, has_burst_token, now):
         """
-        两阶段置信度 + 爆发令牌管理。
+        两阶段置信度 + 跨帧累计确认。
+
+        阶段 1（触发预录）：
+          - 瞬时置信度 >= trigger_threshold → 获取爆发令牌，开启高帧率录制
+          - 或累计置信度 >= trigger_threshold → 同上
+
+        阶段 2（确认报警）：
+          - 瞬时置信度 >= confirm_threshold → 立即确认
+          - 或同一个人累计 alarm_threshold_frames 次检出 → 确认报警
+
         返回 (更新后的 detections, 是否有爆发令牌)
         """
         persons = [d for d in detections if d['label'] == 'person']
@@ -210,13 +220,43 @@ class StreamLoader:
 
         self._update_cooldowns(now, persons)
 
-        # ── 检查当前帧是否有任何吸烟检测 ──
+        # ── 跨帧累计 ──
+        tracking_ids = set()
         max_conf = 0.0
         best_cig = None
         for cig in cigarettes:
             if cig['conf'] > max_conf:
                 max_conf = cig['conf']
                 best_cig = cig
+
+            # 检出 >= trigger_threshold 的烟头，累计 frame_count
+            if cig['conf'] >= self.detector.trigger_threshold:
+                cid = cig.get('id', 0)
+                tracking_ids.add(cid)
+                event = self.smoke_events[cid]
+                event.last_seen_time = now
+                event.frame_count += 1
+
+                # 路径 A：单帧高置信度 → 立即确认
+                if cig['conf'] >= self.detector.confirm_threshold and not event.is_confirmed:
+                    cig['is_alarm'] = True
+                    event.is_confirmed = True
+                    best_cig = cig
+                    max_conf = cig['conf']
+
+                # 路径 B：累计检出 N 次 → 确认（跟踪烟头）
+                elif event.frame_count >= self.alarm_threshold_frames and not event.is_confirmed:
+                    cig['is_alarm'] = True
+                    event.is_confirmed = True
+                    best_cig = cig
+                    max_conf = cig['conf']
+
+        # ── 清理过期 tracking ──
+        expired_ids = [tid for tid, evt in self.smoke_events.items()
+                       if tid not in tracking_ids
+                       and now - evt.last_seen_time > self.lost_timeout]
+        for tid in expired_ids:
+            del self.smoke_events[tid]
 
         # ── 爆发令牌状态机 ──
         if has_burst_token:
@@ -225,10 +265,8 @@ class StreamLoader:
                 BurstTokenManager.release(self.camera_id)
                 has_burst_token = False
 
-        # ── 两阶段逻辑 ──
-        if max_conf >= self.detector.confirm_threshold and best_cig:
-            # Stage 2: 确认报警 (≥0.80)
-            best_cig['is_alarm'] = True
+        # ── 确认报警（瞬时高置信度 或 累计确认） ──
+        if best_cig and best_cig.get('is_alarm'):
             cbox = best_cig['box']
             c_cx, c_cy = (cbox[0] + cbox[2]) / 2, (cbox[1] + cbox[3]) / 2
 
@@ -244,19 +282,13 @@ class StreamLoader:
                 has_burst_token = False
             return detections, False
 
-        elif max_conf >= self.detector.trigger_threshold and best_cig:
-            # Stage 1: 触发预录 (0.55 ~ 0.80)
+        # ── 阶段 1：触发预录（瞬时置信度触发） ──
+        if best_cig and max_conf >= self.detector.trigger_threshold:
             if not has_burst_token:
                 if BurstTokenManager.acquire(self.camera_id, now):
                     has_burst_token = True
                     self.burst_start_time = now
                     logger.info(f"🔥 Cam {self.camera_id} 获取爆发令牌 conf={max_conf:.2f}")
-
-        # ── 过期清理 ──
-        expired = [tid for tid, evt in self.smoke_events.items()
-                   if now - evt.last_seen_time > self.lost_timeout]
-        for tid in expired:
-            del self.smoke_events[tid]
 
         return detections, has_burst_token
 
