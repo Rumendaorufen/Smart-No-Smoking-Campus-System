@@ -781,35 +781,77 @@ const viewFullScreen = (id: number) => {
 }
 .device-tree :deep(.el-tree) {
   background: transparent;
-  color: #e4e7ed;
+  color: #a3a6ad;
+  font-size: 13px;
+}
+.device-tree :deep(.el-tree-node) {
+  margin: 2px 0;
 }
 .device-tree :deep(.el-tree-node__content) {
-  background: transparent;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: all 0.2s;
+  padding: 0 10px;
 }
 .device-tree :deep(.el-tree-node__content:hover) {
-  background: rgba(64, 158, 255, 0.1);
+  background: rgba(64, 158, 255, 0.08);
+  border-color: rgba(64, 158, 255, 0.2);
+}
+.device-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
+  background: linear-gradient(90deg, rgba(64, 158, 255, 0.15) 0%, transparent 100%);
+  border-color: rgba(64, 158, 255, 0.4);
+  color: #409eff;
 }
 .tree-node {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  padding: 2px 0;
+  gap: 8px;
+  width: 100%;
+  padding: 0 2px;
 }
 .node-device-status {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(0,0,0,0.3);
 }
-.node-device-status.online { background: #67c23a; }
-.node-device-status.offline { background: #f56c6c; }
+.node-device-status.online {
+  background: #67c23a;
+  box-shadow: 0 0 6px rgba(103, 194, 58, 0.4);
+}
+.node-device-status.offline {
+  background: #f56c6c;
+  box-shadow: 0 0 6px rgba(245, 108, 108, 0.4);
+}
+.node-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-node.is-alarm .node-label {
+  color: #f56c6c;
+}
 .node-group-icon { color: #e6a23c; }
-.node-count { color: #909399; font-size: 11px; margin-left: auto; }
+.node-count { color: #606266; font-size: 11px; margin-left: auto; }
 .device-search-input { margin-bottom: 8px; }
 .device-search-input :deep(.el-input__wrapper) {
-  background: rgba(0,0,0,0.3);
-  border: 1px solid rgba(64, 158, 255, 0.2);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(64, 158, 255, 0.15);
+  border-radius: 6px;
+  box-shadow: none;
 }
-.device-search-input :deep(.el-input__inner) { color: #e4e7ed; }
+.device-search-input :deep(.el-input__wrapper:hover) {
+  border-color: rgba(64, 158, 255, 0.4);
+}
+.device-search-input :deep(.el-input__inner) {
+  color: #e4e7ed;
+  font-size: 13px;
+}
+.device-search-input :deep(.el-input__inner::placeholder) {
+  color: #606266;
+}
 </style>
