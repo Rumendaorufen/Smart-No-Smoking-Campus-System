@@ -4,6 +4,7 @@ import time
 import threading
 import subprocess
 import logging
+import shutil
 from collections import deque
 
 logger = logging.getLogger(__name__)
@@ -136,12 +137,14 @@ class EvidenceRecorder:
         return save_path
 
     def move_to_persistent(self, ram_path: str) -> str:
-        """确诊报警后，将证据从内存盘剪切到 SSD 长期存储。"""
+        """确诊报警后，将证据从内存盘 COPY 到 SSD（跨盘不能用 os.replace）。"""
         if not ram_path or not os.path.exists(ram_path):
             return ram_path
         rel_path = os.path.relpath(ram_path, self.ram_disk_dir)
         persistent_path = os.path.join(self.save_dir, rel_path)
         os.makedirs(os.path.dirname(persistent_path), exist_ok=True)
-        os.replace(ram_path, persistent_path)
+        # 🚀 shutil.copy2 支持跨磁盘复制
+        shutil.copy2(ram_path, persistent_path)
+        os.remove(ram_path)
         logger.info(f"📦 证据移至 SSD: {persistent_path}")
         return persistent_path
