@@ -54,7 +54,7 @@
                    type="primary" 
                    circle
                    class="play-btn"
-                   @click="openVideo(item.videoUrl)"
+                   @click="openVideo(item.videoUrl, item.roiUrl)"
                  >
                    <el-icon><VideoPlay /></el-icon>
                  </el-button>
@@ -109,7 +109,11 @@
     </div>
 
     <el-dialog v-model="videoVisible" title="证据录像回放" width="600px" destroy-on-close class="custom-dialog">
-      <video v-if="currentVideo" :src="currentVideo" controls autoplay style="width: 100%"></video>
+      <div v-if="videoError" style="text-align:center;padding:20px">
+        <p style="color:#909399;margin-bottom:12px">视频不完整或不可用</p>
+        <img v-if="currentSnapshot" :src="getAiUrl(currentSnapshot)" style="max-width:100%;border-radius:4px">
+      </div>
+      <video v-else-if="currentVideo" :src="currentVideo" controls autoplay style="width:100%" @error="videoError=true"></video>
     </el-dialog>
 
     <el-dialog v-model="auditDialogVisible" :title="auditForm.status === 1 ? '确认违规' : '标记误报'" width="400px" class="custom-dialog">
@@ -161,6 +165,8 @@ const list = ref<Alarm[]>([])
 const total = ref(0)
 const videoVisible = ref(false)
 const currentVideo = ref('')
+const videoError = ref(false)
+const currentSnapshot = ref('')
 
 const query = reactive({
   page: 1,
@@ -218,9 +224,11 @@ const confirmAudit = async () => {
   }
 }
 
-const openVideo = (url: string) => {
+const openVideo = (url: string, snapshotUrl?: string) => {
   if (!url) return
+  videoError.value = false
   currentVideo.value = getAiUrl(url)
+  currentSnapshot.value = snapshotUrl || ''
   videoVisible.value = true
 }
 
