@@ -29,10 +29,14 @@ class StreamLoader:
     MEDIATIMX_HOST = "127.0.0.1"
     MEDIATIMX_PORT = 8554
 
+    # 🚀 证据分级阈值
+    EVIDENCE_VIDEO_THRESHOLD = 0.85    # ≥0.85: 快照 + 视频
+    EVIDENCE_SNAPSHOT_THRESHOLD = 0.65 # 0.65~0.85: 仅快照
+
     def __init__(self, camera_id: int, rtsp_url: str, app=None):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
-        self.app = app 
+        self.app = app
         self.lock = threading.Lock()
         
         self.detector = get_detector()
@@ -332,42 +336,54 @@ class StreamLoader:
     def _trigger_alarm_save(self, frame, owner_id, conf):
         ts = int(time.time())
         img_name = f"alarm_cam{self.camera_id}__p{owner_id or 'unk'}_{ts}.jpg"
-        self.recorder.save_snapshot(frame, img_name)
-        video_name = img_name.replace('.jpg', '.mp4')
-        video_path = os.path.join(self.recorder.save_dir, video_name)
-        main_url = self.get_main_stream_url()
 
-        def record_video():
-            cmd = [
-                'ffmpeg', '-y',
-                '-rtsp_transport', 'tcp',
-                '-i', main_url,
-                '-vcodec', 'copy',
-                '-ss', '0',
-                '-noaccurate_seek',
-                '-t', '10',
-                video_path
-            ]
-            success = IOThrottle.run_ffmpeg(cmd, timeout=15)
-            if success:
-                logger.info(f"🎥 录像完成: {video_name}")
-            else:
-                logger.warning(f"⚠️ 录像失败或超时: {video_name}")
+        # 🚀 所有 ≥0.65 的都保存快照
+        snapshot_url = ""
+        if conf >= self.EVIDENCE_SNAPSHOT_THRESHOLD:
+            self.recorder.save_snapshot(frame, img_name)
+            snapshot_url = f"static/evidence/snapshots/{img_name}"
 
-        threading.Thread(target=record_video, daemon=True).start()
+        # 🚀 仅 ≥0.85 录制视频
+        video_url = ""
+        if conf >= self.EVIDENCE_VIDEO_THRESHOLD:
+            video_name = img_name.replace('.jpg', '.mp4')
+            video_path = os.path.join(self.recorder.save_dir, video_name)
+            main_url = self.get_main_stream_url()
 
+            def record_video():
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-rtsp_transport', 'tcp',
+                    '-i', main_url,
+                    '-vcodec', 'copy',
+                    '-ss', '0',
+                    '-noaccurate_seek',
+                    '-t', '10',
+                    video_path
+                ]
+                success = IOThrottle.run_ffmpeg(cmd, timeout=15)
+                if success:
+                    logger.info(f"🎥 录像完成: {video_name}")
+                else:
+                    logger.warning(f"⚠️ 录像失败或超时: {video_name}")
+
+            threading.Thread(target=record_video, daemon=True).start()
+            video_url = f"static/evidence/{video_name}"
+
+        # 🚀 通知 Java
         def notify_java():
             try:
                 requests.post("http://localhost:8080/api/alerts/report", json={
                     "deviceId": self.camera_id, "type": "SMOKING",
                     "confidence": round(float(conf), 2),
-                    "snapshotUrl": f"static/evidence/snapshots/{img_name}",
-                    "videoUrl": f"static/evidence/{video_name}",
+                    "snapshotUrl": snapshot_url,
+                    "videoUrl": video_url,
                     "personId": owner_id,
                     "description": f"人员{owner_id or '未知'}吸烟"
                 }, timeout=3)
             except Exception as e:
                 logger.error(f"Java 中台上报失败 CID={self.camera_id}: {e}")
+
         threading.Thread(target=notify_java, daemon=True).start()
 
     def _draw_ui(self, frame, detections):
