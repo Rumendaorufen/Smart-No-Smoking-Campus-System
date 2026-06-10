@@ -19,12 +19,10 @@ class AgentService:
         self._agent_executor = None
         self._lock = Lock()
 
-        # 🚀 核心修复 1：创建一个全局复用的数据库引擎，严格控制连接数
-        # pool_size=2 保证常规连接数为 2，max_overflow=1 保证最大并发不超过 3，完美躲过 MySQL 的 5 个限制
         self._engine = create_engine(
             self.settings.db_uri,
-            pool_size=2,
-            max_overflow=1,
+            pool_size=4,
+            max_overflow=2,
             pool_recycle=3600
         )
 
@@ -130,7 +128,7 @@ class AgentService:
             engine=self._engine,
             include_tables=self.settings.include_tables,
             view_support=True,
-            sample_rows_in_table_info=2,
+            sample_rows_in_table_info=0,  # 🚀 schema 已在 prompt 中，无需额外采样
             lazy_table_reflection=True,
         )
         # toolkit = SQLDatabaseToolkit(db=db, llm=llm)
@@ -141,7 +139,7 @@ class AgentService:
                 # 获取原本所有的工具
                 all_tools = super().get_tools()
                 # 强行过滤，只交出查询和检查语法的工具
-                return [t for t in all_tools if t.name in ["sql_db_query", "sql_db_query_checker"]]
+                return [t for t in all_tools if t.name == "sql_db_query"]
         
         # 🚀 2. 实例化我们自定义的“极速版” Toolkit
         toolkit = FastSQLToolkit(db=db, llm=llm)
