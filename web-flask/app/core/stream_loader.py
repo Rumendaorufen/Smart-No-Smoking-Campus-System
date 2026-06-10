@@ -345,9 +345,11 @@ class StreamLoader:
         main_url = self._get_main_stream_url()
 
         def record_video():
+            logger.info(f"🎬 录像线程启动: {video_name}")
             cmd = [
                 'ffmpeg', '-y',
                 '-rtsp_transport', 'tcp',
+                '-stimeout', '5000000',
                 '-i', main_url,
                 '-c', 'copy',
                 '-t', '5',
