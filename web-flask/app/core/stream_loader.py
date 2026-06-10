@@ -101,7 +101,6 @@ class StreamLoader:
                     with self.lock:
                         self.latest_frame = frame
                         self.last_read_time = time.time()
-                    self._update_db_status(1)
                     return True
             return False
         except Exception as e:
@@ -128,7 +127,6 @@ class StreamLoader:
                         self.reconnect_requested = False
                     last_retrieve_time = time.time()
                 else:
-                    self._update_db_status(0)
                     time.sleep(2)
                     continue
 
@@ -148,7 +146,6 @@ class StreamLoader:
                     else:
                         if self.running:
                             logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失")
-                            self._update_db_status(0)
                             with self.lock:
                                 self.reconnect_requested = True
                         time.sleep(1)
@@ -405,7 +402,6 @@ class StreamLoader:
 
             if time_since_read > 5.0 and not already_reconnecting:
                 logger.warning(f"🚨 Cam {self.camera_id} 超时卡死，标记离线")
-                self._update_db_status(0)
                 with self.lock:
                     self.reconnect_requested = True
             time.sleep(1)
@@ -424,11 +420,8 @@ class StreamLoader:
         
         # 1. 先标记停止，让 _reader_thread 的 while 循环退出
         self.running = False
-        
-        # 2. 立即异步通知 Java（不阻塞主进程）
-        threading.Thread(target=self._update_db_status, args=(0,), daemon=True).start()
-        
-        # 3. 🚀 给 FFmpeg 解码器一点缓冲时间（0.2秒），让它先停下来
+
+        # 2. 🚀 给 FFmpeg 解码器一点缓冲时间（0.2秒），让它先停下来
         time.sleep(0.2)
         
         try:
@@ -467,10 +460,39 @@ class StreamManager:
         self.stream_loaders = {}
         self.lock = threading.Lock()
         self.global_ai_enabled = True
-        self.app = None 
+        self.app = None
+        self._heartbeat_interval = 3.0
+
+    def _start_heartbeat_aggregator(self):
+        """每 3 秒批量上报 200 路状态。"""
+        import threading
+        def aggregate_and_report():
+            while True:
+                time.sleep(self._heartbeat_interval)
+                try:
+                    batch = []
+                    with self.lock:
+                        for cid, loader in self.stream_loaders.items():
+                            status = 1 if (loader.running
+                                           and loader.latest_frame is not None
+                                           and not loader.reconnect_requested) else 0
+                            batch.append({"id": cid, "status": status})
+
+                    if batch:
+                        requests.post(
+                            "http://localhost:8080/api/monitor/devices/batch-sync",
+                            json=batch,
+                            timeout=2.0
+                        )
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=aggregate_and_report, daemon=True)
+        t.start()
 
     def init_app(self, app):
         self.app = app
+        self._start_heartbeat_aggregator()
         logger.info("📡 StreamManager 关联成功")
 
     def add_camera(self, cid, url):

@@ -11,8 +11,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class DeviceService extends ServiceImpl<DeviceMapper, Device> {
@@ -21,6 +25,10 @@ public class DeviceService extends ServiceImpl<DeviceMapper, Device> {
 
     @Autowired
     private RestTemplate restTemplate;
+
+    // 🚀 批量心跳内存缓存 + 全局版本号
+    private final ConcurrentHashMap<Integer, DeviceState> deviceStatusCache = new ConcurrentHashMap<>();
+    private final AtomicLong globalVersion = new AtomicLong(0);
 
     /**
      * 1. 获取所有设备 (前端通常 5-10秒 轮询一次即可)
@@ -114,5 +122,61 @@ public class DeviceService extends ServiceImpl<DeviceMapper, Device> {
             // 仅仅记录警告，不要抛出异常影响 Java 端的业务逻辑
             log.warn("⚠️ 无法连接到 Python 引擎 (可能未启动): {}", e.getMessage());
         }
+    }
+
+    // ==================== 🚀 批量心跳 + 增量对账 ====================
+
+    @Data
+    public static class DeviceState {
+        private Integer id;
+        private int status;
+        private long version;
+    }
+
+    @Data
+    public static class DeviceSyncInfo {
+        private List<DeviceState> changes;
+        private long currentVersion;
+    }
+
+    /**
+     * 🚀 批量心跳处理（Python 每 3s 上报一次）
+     * 只更新内存缓存，不写 MySQL
+     */
+    public void processBatchSync(List<Map<String, Object>> batch) {
+        for (Map<String, Object> item : batch) {
+            Integer id = ((Number) item.get("id")).intValue();
+            int status = ((Number) item.get("status")).intValue();
+
+            DeviceState prev = deviceStatusCache.get(id);
+            if (prev == null || prev.status != status) {
+                long ver = globalVersion.incrementAndGet();
+                DeviceState state = new DeviceState();
+                state.setId(id);
+                state.setStatus(status);
+                state.setVersion(ver);
+                deviceStatusCache.put(id, state);
+            }
+        }
+    }
+
+    /**
+     * 🚀 获取增量变更（前端轮询用）
+     */
+    public DeviceSyncInfo getDevicesSince(long clientVersion) {
+        long currentVer = globalVersion.get();
+        if (clientVersion >= currentVer) {
+            return null;
+        }
+        List<DeviceState> changes = new ArrayList<>();
+        for (DeviceState state : deviceStatusCache.values()) {
+            if (state.getVersion() > clientVersion) {
+                changes.add(state);
+            }
+        }
+        DeviceSyncInfo info = new DeviceSyncInfo();
+        info.setChanges(changes);
+        info.setCurrentVersion(currentVer);
+        return info;
     }
 }

@@ -7,6 +7,7 @@ import org.example.webback.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -115,6 +116,27 @@ public class DeviceController {
         } catch (Exception e) {
             return Result.error(500, "同步失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 🚀 Python 批量心跳上报
+     */
+    @PostMapping("/api/monitor/devices/batch-sync")
+    public Result batchSync(@RequestBody List<Map<String, Object>> batch) {
+        deviceService.processBatchSync(batch);
+        return Result.success();
+    }
+
+    /**
+     * 🚀 增量对账接口（前端带 version 参数）
+     */
+    @GetMapping("/api/monitor/devices/delta")
+    public Result getDevicesDelta(@RequestParam(value = "version", defaultValue = "0") long clientVersion) {
+        DeviceService.DeviceSyncInfo delta = deviceService.getDevicesSince(clientVersion);
+        if (delta == null || delta.getChanges().isEmpty()) {
+            return Result.success(new ArrayList<>());
+        }
+        return Result.success(delta.getChanges());
     }
 
     /**

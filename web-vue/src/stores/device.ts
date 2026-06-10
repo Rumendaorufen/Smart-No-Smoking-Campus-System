@@ -3,6 +3,9 @@ import { ref } from 'vue'
 import deviceApi from '../api/device' // 🚀 确保此文件已定义 getStatusOnly 方法
 import { ElMessage } from 'element-plus'
 import type { StringDecoder } from 'string_decoder'
+import axios from 'axios'
+
+const JAVA_BASE = import.meta.env.VITE_APP_BASE_API || 'http://localhost:8080'
 
 // 定义设备接口
 export interface DeviceVO {
@@ -24,6 +27,7 @@ export const useDeviceStore = defineStore('device', () => {
   const deviceList = ref<DeviceVO[]>([])
   const streamVersion = ref(0) // 用于强制刷新视频流
   const loading = ref(false)   // 全局加载状态
+  const localVersion = ref(0)  // 🚀 增量对账版本号
   let pollTimer: any = null    // 轮询定时器
 
   // --- Actions ---
@@ -115,13 +119,39 @@ const retryConnection = async (id: number) => {
   }
 }
 
-  // 6. 启动轮询
+  // 6. 🚀 增量对账轮询
+  const fetchDevicesDelta = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await axios.get(`${JAVA_BASE}/api/monitor/devices/delta`, {
+        params: { version: localVersion.value },
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.data.code === 200) {
+        const delta = res.data.data
+        if (!delta || delta.length === 0) return
+        for (const change of delta) {
+          const idx = deviceList.value.findIndex(d => d.id === change.id)
+          if (idx !== -1) {
+            deviceList.value[idx].status = change.status
+          }
+          if (change.version > localVersion.value) {
+            localVersion.value = change.version
+          }
+        }
+      }
+    } catch (e) {
+      // silent
+    }
+  }
+
+  // 7. 启动轮询
   const startPolling = () => {
-    if (pollTimer) return 
+    if (pollTimer) return
     // 首次全量同步
     fetchDevices(false)
-    // 开启 5 秒一次的状态同步
-    pollTimer = setInterval(pollStatusOnly, 5000)
+    // 开启 5 秒一次的增量对账
+    pollTimer = setInterval(fetchDevicesDelta, 5000)
   }
 
   // 7. 停止轮询
