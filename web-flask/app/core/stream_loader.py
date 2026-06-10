@@ -468,9 +468,38 @@ class StreamManager:
         t = threading.Thread(target=aggregate_and_report, daemon=True)
         t.start()
 
+    def _start_reconnect_poller(self):
+        """每 30 秒自动重连离线设备（用户无需手动唤醒）。"""
+
+        def poll():
+            while True:
+                time.sleep(30)
+                try:
+                    with self.lock:
+                        offline = [cid for cid, ld in self.stream_loaders.items()
+                                   if not ld.running]
+                    for cid in offline:
+                        with self.lock:
+                            if cid not in self.stream_loaders:
+                                continue
+                            loader = self.stream_loaders[cid]
+                            if loader.running:
+                                continue
+                            url = loader.rtsp_url
+                            old = self.stream_loaders.pop(cid)
+                            old.stop()
+                        logger.info(f"🔄 自动重连 CID={cid}")
+                        self.add_camera(cid, url)
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=poll, daemon=True)
+        t.start()
+
     def init_app(self, app):
         self.app = app
         self._start_heartbeat_aggregator()
+        self._start_reconnect_poller()
         logger.info("📡 StreamManager 关联成功")
 
     def add_camera(self, cid, url):
@@ -486,8 +515,8 @@ class StreamManager:
 
             l = StreamLoader(cid, url, self.app)
             l.set_ai_status(self.global_ai_enabled)
+            self.stream_loaders[cid] = l  # 🚀 先存入，失败后靠 poller 重连
             if l._connect():
-                self.stream_loaders[cid] = l
                 if l.start(): return True
             return False
 
