@@ -396,8 +396,8 @@ class StreamLoader:
                     h, w = frame.shape[:2]
                     cv2.rectangle(frame, (0,0), (w,h), (0,0,255), 5)
                 else:
-                    color = (0, 255, 255)
-                    text = "cig"
+                    # 🚀 非报警烟头不画框
+                    continue
             else:
                 color = (0, 255, 0)
                 text = label
