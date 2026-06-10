@@ -382,16 +382,26 @@ const getThumbnailUrl = (id: number) => {
 }
 
 const startThumbTimers = () => {
-  Object.values(thumbTimers).forEach(clearInterval)
-  thumbTimers = {}
+  // 🚀 清理已禁用/离线设备的定时器
+  const activeIds = new Set(
+    deviceList.value.filter(d => d.status === 1 && d.enabled).map(d => d.id)
+  )
+  for (const id of Object.keys(thumbTimers)) {
+    const nid = Number(id)
+    if (!activeIds.has(nid)) {
+      clearInterval(thumbTimers[nid])
+      delete thumbTimers[nid]
+    }
+  }
+  // 启动缺失的定时器
   for (const device of deviceList.value) {
     if (device.status !== 1 || !device.enabled) continue
-    const id = device.id
+    if (thumbTimers[device.id]) continue
     const interval = 1000 + Math.random() * 500
-    thumbTimers[id] = setInterval(() => {
+    thumbTimers[device.id] = setInterval(() => {
       thumbVersions.value = {
         ...thumbVersions.value,
-        [id]: (thumbVersions.value[id] || 0) + 1
+        [device.id]: (thumbVersions.value[device.id] || 0) + 1
       }
     }, interval)
   }
