@@ -108,56 +108,13 @@ class EvidenceRecorder:
                 self.stop_recording() # 🚀 改为同步调用，确保 release 先执行
 
     def stop_recording(self):
-        """同步闭合文件并触发修复"""
         with self.lock:
             if not self.is_recording or self.writer is None:
                 return
-            
-            # 1. 物理闭合（这一步最重要）
             self.writer.release()
             self.writer = None
             self.is_recording = False
-            
-        temp_path = self.current_video_path
-        logger.info(f"🛑 [Physical Release] 文件已闭合: {os.path.basename(temp_path)}")
-
-        # 2. 只有闭合成功了，才去启动转码（转码可以异步）
-        if temp_path and os.path.exists(temp_path):
-            t = threading.Thread(target=self._convert_to_h264, args=(temp_path,))
-            t.daemon = True
-            t.start()
-
-    def _convert_to_h264(self, video_path):
-        """
-        使用 FFmpeg 强制重构 MP4 容器并修复索引
-        -movflags +faststart 是解决“文件大小正常但打不开”的万能药
-        """
-        path_no_ext = os.path.splitext(video_path)[0]
-        final_path = f"{path_no_ext}_ready.mp4"
-        
-        # 🚀 -pix_fmt yuv420p 是保证浏览器/Windows播放器能播放的关键
-        cmd = [
-            'ffmpeg', '-y', '-i', video_path,
-            '-c:v', 'libx264', 
-            '-pix_fmt', 'yuv420p', 
-            '-movflags', '+faststart',
-            '-preset', 'ultrafast',
-            final_path
-        ]
-        
-        try:
-            # 增加 stderr=subprocess.STDOUT 来捕捉错误
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                logger.error(f"FFmpeg 报错: {result.stdout}")
-                return
-
-            if os.path.exists(final_path):
-                time.sleep(0.5)
-                os.replace(final_path, video_path) 
-                logger.info(f"✨ 视频转码与头修复完成")
-        except Exception as e:
-            logger.error(f"⚠️ 转码异常: {e}")
+        logger.info(f"🛑 录制闭合: {os.path.basename(self.current_video_path)}")
 
     def save_snapshot(self, frame, filename):
         if frame is None: return

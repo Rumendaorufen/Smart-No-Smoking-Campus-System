@@ -3,6 +3,7 @@ import time
 import threading
 import os
 import requests
+import subprocess
 import logging
 import math
 from collections import defaultdict
@@ -24,6 +25,9 @@ class SmokeEvent:
         self.is_confirmed = False 
 
 class StreamLoader:
+    MEDIATIMX_HOST = "127.0.0.1"
+    MEDIATIMX_PORT = 8554
+
     def __init__(self, camera_id: int, rtsp_url: str, app=None):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
@@ -74,22 +78,22 @@ class StreamLoader:
             # 仅仅记录，不要抛出，防止崩掉调用它的线程
             logger.debug(f"通知 Java 失败(正常现象): {e}")
 
+    def _get_proxy_url(self, main_stream=False):
+        suffix = "_main" if main_stream else "_sub"
+        return f"rtsp://{self.MEDIATIMX_HOST}:{self.MEDIATIMX_PORT}/cam/{self.camera_id}{suffix}"
+
     def _connect(self):
-        """🚀 增强稳定性连接配置"""
         try:
-            if self.cap: 
+            if self.cap:
                 self.cap.release()
-            
-            # 🚀 关键修复：禁用 FFmpeg 内部线程，由 Python 线程全权负责
-            # 添加 threads=1 解决 pthread_frame.c 断言失败问题
+
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000|threads;1"
-            
-            logger.info(f"🛰️ 正在点火: {self.rtsp_url.split('@')[-1]}")
-            self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
-            
-            # 这里的设置也很重要
+
+            proxy_url = self._get_proxy_url(main_stream=False)
+            logger.info(f"🛰️ 代理拉流: {proxy_url}")
+            self.cap = cv2.VideoCapture(proxy_url, cv2.CAP_FFMPEG)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            
+
             if self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if ret and frame is not None:
@@ -100,8 +104,11 @@ class StreamLoader:
                     return True
             return False
         except Exception as e:
-            logger.error(f"💥 连接异常: {e}")
+            logger.error(f"💥 代理连接异常: {e}")
             return False
+
+    def get_main_stream_url(self):
+        return self._get_proxy_url(main_stream=True)
 
     def _reader_thread(self):
         """🚀 改造：grab() 高频清空缓冲区 + 每 200ms retrieve() 一次，防止 OpenCV 老化延迟"""
@@ -329,14 +336,46 @@ class StreamLoader:
         img_name = f"alarm_cam{self.camera_id}__p{owner_id or 'unk'}_{ts}.jpg"
         self.recorder.save_snapshot(frame, img_name)
         video_name = img_name.replace('.jpg', '.mp4')
-        h, w = frame.shape[:2]
-        self.recorder.start_recording(video_name, post_record_sec=5, width=w, height=h)
+        video_path = os.path.join(self.recorder.save_dir, video_name)
+        main_url = self.get_main_stream_url()
+
+        def record_video():
+            try:
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-rtsp_transport', 'tcp',
+                    '-i', main_url,
+                    '-vcodec', 'copy',
+                    '-ss', '0',
+                    '-noaccurate_seek',
+                    '-t', '10',
+                    video_path
+                ]
+                CREATE_BELOW_NORMAL = 0x00004000
+                subprocess.run(
+                    cmd,
+                    timeout=15,
+                    creationflags=CREATE_BELOW_NORMAL,
+                    capture_output=True,
+                    text=True
+                )
+                logger.info(f"🎥 FFmpeg 录像完成: {video_name}")
+            except subprocess.TimeoutExpired:
+                logger.error(f"⏰ FFmpeg 录像超时 CID={self.camera_id}，强制终止")
+            except Exception as e:
+                logger.error(f"⚠️ 录像异常: {e}")
+
+        threading.Thread(target=record_video, daemon=True).start()
+
         def notify_java():
             try:
                 requests.post("http://localhost:8080/api/alerts/report", json={
-                    "deviceId": self.camera_id, "type": "SMOKING", "confidence": round(float(conf), 2),
-                    "snapshotUrl": f"static/evidence/snapshots/{img_name}", "videoUrl": f"static/evidence/{video_name}",
-                    "personId": owner_id, "description": f"人员{owner_id or '未知'}吸烟"
+                    "deviceId": self.camera_id, "type": "SMOKING",
+                    "confidence": round(float(conf), 2),
+                    "snapshotUrl": f"static/evidence/snapshots/{img_name}",
+                    "videoUrl": f"static/evidence/{video_name}",
+                    "personId": owner_id,
+                    "description": f"人员{owner_id or '未知'}吸烟"
                 }, timeout=3)
             except Exception as e:
                 logger.error(f"Java 中台上报失败 CID={self.camera_id}: {e}")
