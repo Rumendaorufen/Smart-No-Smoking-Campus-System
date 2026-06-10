@@ -1,0 +1,23 @@
+# MediaMTX 配置 — 200 路 RTSP 纯代理，零 CPU 转发
+rtsp: true
+rtspAddress: ":8554"
+rtmp: false    # 禁用 RTMP，无二次转码
+hls: false     # 禁用 HLS
+webrtc: false  # 禁用 WebRTC
+api: false     # 禁用 API 接口
+
+# 日志
+logLevel: error
+logDestinations: ["file"]
+logFile: "logs/mediamtx.log"
+
+# 路径配置：所有 /cam/ 前缀的路径都作为纯 RTSP 代理
+paths:
+  cam_{id}:
+    source: ondemand
+    sourceOnDemandStartAfter: 2s
+    sourceOnDemandCloseAfter: 10s
+  cam_{id}_main:
+    source: ondemand
+    sourceOnDemandStartAfter: 2s
+    sourceOnDemandCloseAfter: 10s

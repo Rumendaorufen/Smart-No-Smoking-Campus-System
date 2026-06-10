@@ -1,0 +1,4 @@
+# Note: MediaMTX (mediamtx.exe) is an external system dependency required at runtime.
+# Download the Windows binary from https://github.com/bluenviron/mediamtx/releases
+# and place mediamtx.exe in the web-flask/ directory alongside mediamtx.yml.
+# Start it via scripts/start_mediamtx.bat before launching the Flask app.
