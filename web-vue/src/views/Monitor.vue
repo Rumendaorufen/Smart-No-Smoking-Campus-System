@@ -384,7 +384,7 @@ const getThumbnailUrl = (id: number) => {
 const startThumbTimers = () => {
   // 🚀 清理已禁用/离线设备的定时器
   const activeIds = new Set(
-    deviceList.value.filter(d => d.status === 1 && d.enabled).map(d => d.id)
+    deviceList.value.filter(d => d.status === 1 && d.enabled && !d.isVideoError).map(d => d.id)
   )
   for (const id of Object.keys(thumbTimers)) {
     const nid = Number(id)
@@ -395,7 +395,7 @@ const startThumbTimers = () => {
   }
   // 启动缺失的定时器
   for (const device of deviceList.value) {
-    if (device.status !== 1 || !device.enabled) continue
+    if (device.status !== 1 || !device.enabled || device.isVideoError) continue
     if (thumbTimers[device.id]) continue
     const interval = 1000 + Math.random() * 500
     thumbTimers[device.id] = setInterval(() => {
