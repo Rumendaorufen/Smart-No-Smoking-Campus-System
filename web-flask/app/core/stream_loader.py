@@ -348,9 +348,9 @@ class StreamLoader:
                 'ffmpeg', '-y',
                 '-rtsp_transport', 'tcp',
                 '-i', main_url,
-                '-vcodec', 'copy',
-                '-ss', '0',
-                '-noaccurate_seek',
+                '-c:v', 'libx264',
+                '-preset', 'superfast',
+                '-pix_fmt', 'yuv420p',
                 '-t', '10',
                 video_path
             ]
