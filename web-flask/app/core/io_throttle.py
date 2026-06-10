@@ -7,8 +7,16 @@
 import threading
 import subprocess
 import logging
+import shutil
 
 logger = logging.getLogger(__name__)
+
+# 🚀 启动时检测 FFmpeg 是否可用
+_FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
+if not _FFMPEG_AVAILABLE:
+    logger.error("❌ FFmpeg 未安装！视频录制无法工作。")
+    logger.error("   下载: https://ffmpeg.org/download.html")
+    logger.error("   或管理员 PowerShell: winget install ffmpeg")
 
 
 class IOThrottle:
@@ -47,10 +55,14 @@ class IOThrottle:
         """
         带限流和超时的 FFmpeg 执行包装。
 
-        1. 获取写盘令牌
-        2. 设置 Windows Below Normal 优先级
-        3. 启动进程并在超时后强制终止
+        1. 检查 FFmpeg 是否可用
+        2. 获取写盘令牌
+        3. 设置 Windows Below Normal 优先级
+        4. 启动进程并在超时后强制终止
         """
+        if not _FFMPEG_AVAILABLE:
+            logger.error("FFmpeg 未安装，跳过录像")
+            return False
         if not cls.acquire():
             return False
 
@@ -61,12 +73,15 @@ class IOThrottle:
                 cmd,
                 creationflags=CREATE_BELOW_NORMAL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.PIPE
             )
             with cls._lock:
                 cls._active_pids.add(process.pid)
 
             process.wait(timeout=timeout)
+            if process.returncode != 0:
+                err = process.stderr.read().decode('utf-8', errors='replace') if process.stderr else ''
+                logger.error(f"FFmpeg 失败 (rc={process.returncode}): {err[:200]}")
             return process.returncode == 0
 
         except subprocess.TimeoutExpired:
