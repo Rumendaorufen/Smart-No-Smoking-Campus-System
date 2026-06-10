@@ -111,97 +111,156 @@
       </aside>
       
       <section class="center-monitor">
-        <div v-if="currentDevice" class="monitor-player-box" 
-             :class="{ 'offline': currentDevice.status !== 1 || !currentDevice.enabled || currentDevice.isVideoError, 'is-alarm': alarmState[currentDevice.id] }">
-          
-          <div class="player-header">
-            <div class="header-left">
-              <span v-if="currentDevice.enabled && !currentDevice.isVideoError && currentDevice.status === 1" class="live-badge">LIVE</span>
-              <span v-else class="offline-badge">OFFLINE</span>
-              <span class="device-title">{{ currentDevice.name }}</span>
-              <span class="device-id">#{{ currentDevice.id }}</span>
-            </div>
-            <div class="header-status" :class="currentDevice.enabled && currentDevice.status === 1 && !currentDevice.isVideoError ? 'online' : 'offline'">
-              <span class="status-dot"></span>
-              {{ currentDevice.enabled && currentDevice.status === 1 && !currentDevice.isVideoError ? '信号正常' : '信号丢失' }}
-            </div>
-          </div>
+        <!-- 🚀 视图模式切换 -->
+        <div class="view-mode-tabs">
+          <el-radio-group v-model="viewMode" size="small">
+            <el-radio-button value="grid">
+              <el-icon><Grid /></el-icon> 网格
+            </el-radio-button>
+            <el-radio-button value="detail">
+              <el-icon><VideoCameraFilled /></el-icon> 详情
+            </el-radio-button>
+          </el-radio-group>
+          <span class="grid-info" v-if="viewMode === 'grid'">
+            共 {{ filteredDevices.length }} 路 ·
+            在线 {{ onlineCount }} ·
+            报警 {{ Object.keys(alarmState).filter(k => alarmState[k]).length }}
+          </span>
+        </div>
 
-          <div class="player-content">
-            <template v-if="currentDevice.enabled">
-              <img 
-                v-if="currentDevice.status === 1 || currentDevice.isRetrying"
-                :src="getStreamUrl(currentDevice.id)" 
-                class="main-stream"
-                v-show="!currentDevice.isVideoError"
-                @error="handleVideoError(currentDevice.id)" 
-                @load="handleVideoLoaded(currentDevice.id)"
-              >
-              
-              <div v-else class="player-overlay">
-                <el-icon :size="64" :class="{ 'spin-icon': currentDevice.isRetrying }">
-                  <component :is="currentDevice.isRetrying ? Loading : Monitor" />
-                </el-icon>
-                <div style="margin-top:20px">
-                  {{ currentDevice.isRetrying ? '正在唤醒摄像头...' : '设备当前处于休眠状态' }}
-                </div>
-                <el-button 
-                  v-if="!currentDevice.isRetrying" 
-                  type="primary" 
-                  size="small" 
-                  style="margin-top:15px" 
-                  @click="retryConnection"
-                >
-                  立即唤醒
-                </el-button>
-              </div>
-            </template>
-            
-            <div v-else class="player-overlay">
-              <el-icon :size="64"><VideoCameraFilled /></el-icon>
-              <div style="margin-top:20px">该监控区域已禁用</div>
+        <!-- 🚀 网格模式 -->
+        <div v-if="viewMode === 'grid'" class="grid-view">
+          <div
+            v-for="device in filteredDevices"
+            :key="device.id"
+            class="grid-cell"
+            :class="{
+              'offline': device.status !== 1 || !device.enabled,
+              'is-alarm': alarmState[device.id]
+            }"
+            @dblclick="enterDetail(device)"
+          >
+            <div class="cell-header">
+              <span class="cell-name">{{ device.name }}</span>
+              <span class="cell-status" :class="device.status === 1 ? 'online' : 'offline'">
+                {{ device.status === 1 ? 'LIVE' : 'OFF' }}
+              </span>
             </div>
-
-            <div v-if="alarmState[currentDevice.id]" class="alarm-overlay">
-              <el-icon class="nav-alarm-icon"><Warning /></el-icon>
-              <span>警告：检测到违规吸烟行为！</span>
+            <img
+              v-if="device.status === 1 && device.enabled"
+              :src="getThumbnailUrl(device.id)"
+              class="cell-thumb"
+              @error="onThumbError($event, device.id)"
+            >
+            <div v-else class="cell-overlay">
+              <el-icon :size="32"><VideoCameraFilled /></el-icon>
             </div>
-          </div> <div class="player-controls">
-            <div class="control-info">URL: {{ currentDevice.rtspUrl }}</div>
-            <div class="control-group right">
-              <el-button type="primary" :icon="FullScreen" @click="viewFullScreen(currentDevice.id)" circle plain></el-button>
+            <div v-if="alarmState[device.id]" class="cell-alarm-badge">
+              <el-icon><Warning /></el-icon> 吸烟
             </div>
           </div>
         </div>
 
-        <div v-else class="empty-state">
-          <el-icon :size="80"><Monitor /></el-icon>
-          <p>请选择监控区域</p>
+        <!-- 详情模式（单路 MJPEG，原有播放器） -->
+        <div v-if="viewMode === 'detail'" class="detail-view">
+          <div v-if="currentDevice" class="monitor-player-box"
+               :class="{ 'offline': currentDevice.status !== 1 || !currentDevice.enabled || currentDevice.isVideoError, 'is-alarm': alarmState[currentDevice.id] }">
+
+            <div class="player-header">
+              <div class="header-left">
+                <span v-if="currentDevice.enabled && !currentDevice.isVideoError && currentDevice.status === 1" class="live-badge">LIVE</span>
+                <span v-else class="offline-badge">OFFLINE</span>
+                <span class="device-title">{{ currentDevice.name }}</span>
+                <span class="device-id">#{{ currentDevice.id }}</span>
+              </div>
+              <div class="header-status" :class="currentDevice.enabled && currentDevice.status === 1 && !currentDevice.isVideoError ? 'online' : 'offline'">
+                <span class="status-dot"></span>
+                {{ currentDevice.enabled && currentDevice.status === 1 && !currentDevice.isVideoError ? '信号正常' : '信号丢失' }}
+              </div>
+            </div>
+
+            <div class="player-content">
+              <template v-if="currentDevice.enabled">
+                <img
+                  v-if="currentDevice.status === 1 || currentDevice.isRetrying"
+                  :src="getStreamUrl(currentDevice.id)"
+                  class="main-stream"
+                  v-show="!currentDevice.isVideoError"
+                  @error="handleVideoError(currentDevice.id)"
+                  @load="handleVideoLoaded(currentDevice.id)"
+                >
+                <div v-else class="player-overlay">
+                  <el-icon :size="64" :class="{ 'spin-icon': currentDevice.isRetrying }">
+                    <component :is="currentDevice.isRetrying ? Loading : Monitor" />
+                  </el-icon>
+                  <div style="margin-top:20px">{{ currentDevice.isRetrying ? '正在唤醒摄像头...' : '设备当前处于休眠状态' }}</div>
+                  <el-button v-if="!currentDevice.isRetrying" type="primary" size="small" style="margin-top:15px" @click="retryConnection">立即唤醒</el-button>
+                </div>
+              </template>
+              <div v-else class="player-overlay">
+                <el-icon :size="64"><VideoCameraFilled /></el-icon>
+                <div style="margin-top:20px">该监控区域已禁用</div>
+              </div>
+              <div v-if="alarmState[currentDevice.id]" class="alarm-overlay">
+                <el-icon class="nav-alarm-icon"><Warning /></el-icon>
+                <span>警告：检测到违规吸烟行为！</span>
+              </div>
+            </div>
+            <div class="player-controls">
+              <div class="control-info">URL: {{ currentDevice.rtspUrl }}</div>
+              <div class="control-group right">
+                <el-button type="primary" :icon="FullScreen" @click="viewFullScreen(currentDevice.id)" circle plain></el-button>
+                <el-button type="info" :icon="Grid" @click="viewMode = 'grid'" circle plain></el-button>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="empty-state">
+            <el-icon :size="80"><Monitor /></el-icon>
+            <p>请选择监控区域</p>
+          </div>
         </div>
       </section>
       
       <aside class="side-panel right-panel">
         <div class="panel-section full-height">
-          <div class="section-title"><span class="title-dot"></span> 监控矩阵 ({{ deviceList.length }})</div>
-          <div class="device-list-scroll">
-            <div v-for="device in deviceList" 
-                 :key="device.id" 
-                 class="device-nav-item" 
-                 :class="{ 
-                    'active': currentDevice?.id === device.id, 
-                    'offline': device.status !== 1 || !device.enabled,
-                    'is-alarm': alarmState[device.id]
-                 }" 
-                 @click="switchDevice(device)">
-              <div class="nav-status-indicator"></div>
-              <div class="nav-content">
-                <div class="nav-name">{{ device.name }}</div>
-                <div class="nav-sub">状态: {{ device.enabled ? (device.status === 1 ? '在线' : '离线') : '已停用' }}</div>
-              </div>
-              <el-icon v-if="alarmState[device.id]" class="blink-icon" color="#f56c6c"><Warning /></el-icon>
-              <div class="nav-arrow"><el-icon><ArrowRight /></el-icon></div>
-            </div>
+          <div class="section-title">
+            <span class="title-dot"></span> 设备列表 ({{ filteredDevices.length }})
           </div>
+          <el-input
+            v-model="deviceSearch"
+            placeholder="搜索设备名称或 ID..."
+            size="small"
+            clearable
+            class="device-search-input"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-tree
+            :data="deviceTreeData"
+            :props="treeProps"
+            node-key="id"
+            :filter-node-method="filterDeviceNode"
+            highlight-current
+            :height="treeHeight"
+            use-virtual
+            @node-click="handleTreeNodeClick"
+            class="device-tree"
+          >
+            <template #default="{ node, data }">
+              <div class="tree-node" :class="{ 'is-alarm': data.isAlarm }">
+                <span v-if="data.type === 'group'" class="node-group-icon">
+                  <el-icon><Folder /></el-icon>
+                </span>
+                <span v-else class="node-device-status" :class="data.status === 1 ? 'online' : 'offline'"></span>
+                <span class="node-label">{{ data.label }}</span>
+                <span v-if="data.type === 'group'" class="node-count">({{ data.children?.length || 0 }})</span>
+                <el-icon v-if="data.isAlarm" color="#f56c6c" class="blink-icon"><Warning /></el-icon>
+              </div>
+            </template>
+          </el-tree>
         </div>
       </aside>
     </div>
@@ -227,9 +286,10 @@ import { useRouter } from 'vue-router'
 import { useDeviceStore } from '../stores/device'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { 
+import {
   Setting, SwitchButton, Refresh, Connection, Bell, Files, Platform,
-  FullScreen, VideoCameraFilled, Monitor, Loading, Warning, CircleCloseFilled, Odometer, ArrowRight,ChatDotRound
+  FullScreen, VideoCameraFilled, Monitor, Loading, Warning, CircleCloseFilled,
+  Odometer, ArrowRight, ChatDotRound, Grid, Search, Folder
 } from '@element-plus/icons-vue'
 import axios from 'axios'
 import SockJS from 'sockjs-client'
@@ -308,6 +368,107 @@ const isAdmin = computed(() => currentUser.role === 'admin')
 const username = computed(() => currentUser.username || 'Admin')
 const onlineCount = computed(() => deviceList.value.filter(d => d.enabled && d.status === 1).length)
 const offlineCount = computed(() => deviceList.value.filter(d => !d.enabled || d.status !== 1).length)
+
+// 🚀 视图模式
+const viewMode = ref<'grid' | 'detail'>('grid')
+
+// 🚀 缩略图版本号（每路独立定时器更新，避免全量重渲染）
+const thumbVersions = ref<Record<number, number>>({})
+let thumbTimers: Record<number, ReturnType<typeof setInterval>> = {}
+
+const getThumbnailUrl = (id: number) => {
+  const v = thumbVersions.value[id] || 0
+  return `${AI_API}/api/v1/monitor/thumbnail/${id}?_=${v}`
+}
+
+const startThumbTimers = () => {
+  Object.values(thumbTimers).forEach(clearInterval)
+  thumbTimers = {}
+  for (const device of deviceList.value) {
+    if (device.status !== 1 || !device.enabled) continue
+    const id = device.id
+    const interval = 1000 + Math.random() * 500
+    thumbTimers[id] = setInterval(() => {
+      thumbVersions.value = {
+        ...thumbVersions.value,
+        [id]: (thumbVersions.value[id] || 0) + 1
+      }
+    }, interval)
+  }
+}
+
+watch(deviceList, () => startThumbTimers(), { deep: true })
+
+// 🚀 网格设备筛选
+const deviceSearch = ref('')
+const filteredDevices = computed(() => {
+  if (!deviceSearch.value) return deviceList.value
+  const q = deviceSearch.value.toLowerCase()
+  return deviceList.value.filter(d =>
+    d.name.toLowerCase().includes(q) || String(d.id).includes(q)
+  )
+})
+
+// 🚀 el-tree
+const treeProps = { children: 'children', label: 'label' }
+const treeHeight = computed(() => Math.max(window.innerHeight - 300, 400))
+
+const filterDeviceNode = (value: string, data: any) => {
+  if (!value) return true
+  return data.label.toLowerCase().includes(value.toLowerCase())
+}
+
+watch(deviceSearch, (val) => {
+  // el-tree 自动调用 filter-node-method
+})
+
+const deviceTreeData = computed(() => {
+  // 三级树状：教学楼 → 楼层 → 摄像头
+  const groups: Record<string, any> = {}
+  for (const d of filteredDevices.value) {
+    const building = d.location?.building || '未分组'
+    const floor = d.location?.floor || ''
+    const groupKey = `${building}-${floor}`
+    if (!groups[groupKey]) {
+      groups[groupKey] = {
+        id: `group_${groupKey}`,
+        label: floor ? `${building} ${floor}层` : building,
+        type: 'group',
+        children: []
+      }
+    }
+    groups[groupKey].children.push({
+      id: d.id,
+      label: d.name,
+      type: 'device',
+      status: d.status,
+      isAlarm: !!alarmState.value[d.id],
+      _device: d
+    })
+  }
+  return Object.values(groups)
+})
+
+const enterDetail = (device: any) => {
+  currentDevice.value = device
+  viewMode.value = 'detail'
+  deviceStore.updateDeviceState(device.id, { isVideoError: false, isLoading: true })
+}
+
+const onThumbError = (event: Event, deviceId: number) => {
+  setTimeout(() => {
+    thumbVersions.value = {
+      ...thumbVersions.value,
+      [deviceId]: (thumbVersions.value[deviceId] || 0) + 1
+    }
+  }, 3000)
+}
+
+const handleTreeNodeClick = (data: any) => {
+  if (data.type === 'device' && data._device) {
+    switchDevice(data._device)
+  }
+}
 const isGlobalRetrying = computed(() => deviceList.value.some(d => d.isRetrying))
 
 const switchDevice = (device: any) => {
@@ -364,33 +525,31 @@ onMounted(() => {
   }
   updateTime()
   setInterval(updateTime, 1000)
-  
-  // 2. 设备列表轮询 (保持不变)
+
+  // 2. 设备列表加载 + 缩略图定时器启动
   deviceStore.fetchDevices().then(() => {
     deviceStore.startPolling()
+    startThumbTimers()
   })
-  
-  // 3. WebSocket 初始化 (保持不变)
+
+  // 3. WebSocket 初始化
   initWebSocket()
 
-  // 4. 🚀 关键：同步系统状态（AI开关）
-  fetchSystemStatus() // 立即执行一次
-  // 每 3 秒同步一次，确保和 System.vue 的体感一致
-  statusPollingTimer = setInterval(fetchSystemStatus, 3000) 
+  // 4. 🚀 同步系统状态（AI开关）
+  fetchSystemStatus()
+  statusPollingTimer = setInterval(fetchSystemStatus, 3000)
 })
 
 onUnmounted(() => {
-  // 停止设备轮询
   deviceStore.stopPolling()
-  
-  // 断开 WebSocket
   if (stompClient) stompClient.disconnect(() => {})
-
-  // 🚀 核心修复：必须清理系统状态轮询，否则切换页面后还会报错或浪费资源
   if (statusPollingTimer) {
     clearInterval(statusPollingTimer)
     statusPollingTimer = null
   }
+  // 🚀 清理缩略图定时器
+  Object.values(thumbTimers).forEach(clearInterval)
+  thumbTimers = {}
 })
 
 const viewFullScreen = (id: number) => {
@@ -512,4 +671,131 @@ const viewFullScreen = (id: number) => {
 :deep(.ai-chat-drawer .el-drawer__close-btn:hover) {
   color: #f56c6c;
 }
+
+/* 🚀 网格视图样式 */
+.view-mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(22, 33, 52, 0.6);
+  border-bottom: 1px solid rgba(64, 158, 255, 0.1);
+  flex-shrink: 0;
+}
+.grid-info {
+  font-size: 12px;
+  color: #909399;
+}
+.grid-view {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+.grid-cell {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border: 1px solid rgba(64, 158, 255, 0.2);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.grid-cell:hover {
+  border-color: #409eff;
+  box-shadow: 0 0 12px rgba(64, 158, 255, 0.3);
+}
+.grid-cell.offline {
+  border-color: #f56c6c;
+  opacity: 0.6;
+}
+.grid-cell.is-alarm {
+  border-color: #f56c6c;
+  animation: flashBorder 0.8s infinite alternate;
+}
+.grid-cell .cell-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+  z-index: 2;
+  font-size: 12px;
+}
+.cell-name {
+  color: #e4e7ed;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-status { font-weight: bold; flex-shrink: 0; }
+.cell-status.online { color: #67c23a; }
+.cell-status.offline { color: #f56c6c; }
+.cell-thumb { width: 100%; height: 100%; object-fit: cover; }
+.cell-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #606266;
+}
+.cell-alarm-badge {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(245, 108, 108, 0.85);
+  color: white;
+  font-size: 12px;
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 2;
+}
+.detail-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.device-tree :deep(.el-tree) {
+  background: transparent;
+  color: #e4e7ed;
+}
+.device-tree :deep(.el-tree-node__content) {
+  background: transparent;
+}
+.device-tree :deep(.el-tree-node__content:hover) {
+  background: rgba(64, 158, 255, 0.1);
+}
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.node-device-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.node-device-status.online { background: #67c23a; }
+.node-device-status.offline { background: #f56c6c; }
+.node-group-icon { color: #e6a23c; }
+.node-count { color: #909399; font-size: 11px; margin-left: auto; }
+.device-search-input { margin-bottom: 8px; }
+.device-search-input :deep(.el-input__wrapper) {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(64, 158, 255, 0.2);
+}
+.device-search-input :deep(.el-input__inner) { color: #e4e7ed; }
 </style>
