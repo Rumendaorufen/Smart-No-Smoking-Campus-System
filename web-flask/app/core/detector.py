@@ -45,8 +45,10 @@ class SmokingDetector:
         self.person_conf = 0.30
         
         # 烟头检测参数
-        self.smoke_imgsz = 640   
-        self.smoke_conf = 0.7
+        # 🚀 smoke_conf 降至 0.55 以匹配两阶段置信度的 trigger_threshold
+        # 让 YOLO 更宽容，由上层 _handle_two_stage_alarm 做最终判定
+        self.smoke_imgsz = 640
+        self.smoke_conf = 0.55
 
         self.max_persons_per_frame = 5 
         

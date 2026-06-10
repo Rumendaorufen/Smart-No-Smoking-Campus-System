@@ -143,7 +143,10 @@ class StreamLoader:
                             with self.lock:
                                 self.reconnect_requested = True
                         time.sleep(1)
-                elif not grabbed:
+                elif grabbed:
+                    # 🚀 grab 成功但未到 retrieve 时机：短暂休眠防止 CPU 空转
+                    time.sleep(0.005)
+                else:
                     time.sleep(0.01)
             except Exception as e:
                 logger.debug(f"读取线程退出捕获: {e}")
