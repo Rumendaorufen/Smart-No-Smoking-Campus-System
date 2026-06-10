@@ -333,7 +333,10 @@ class StreamLoader:
         img_name = f"alarm_cam{self.camera_id}__p{owner_id or 'unk'}_{ts}.jpg"
 
         # 🚀 报警已确认，无条件保存快照（证据基石）
-        self.recorder.save_snapshot(frame, img_name)
+        ram_path = self.recorder.save_snapshot(frame, img_name)
+        # 从内存盘迁移到 SSD（保证 Web 可访问）
+        if ram_path and self.recorder.ram_disk_dir != self.recorder.save_dir:
+            self.recorder.move_to_persistent(ram_path)
         snapshot_url = f"static/evidence/snapshots/{img_name}"
 
         # 🚀 仅高置信度 (≥0.85) 录制视频（存储成本高）
