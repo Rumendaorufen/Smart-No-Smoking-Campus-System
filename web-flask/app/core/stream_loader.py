@@ -45,7 +45,7 @@ class StreamLoader:
         self.smoke_events = defaultdict(SmokeEvent)
         # 🚀 检测频率从 25fps 降到 2fps，累计帧数同步从 15 降到 3
         self.alarm_threshold_frames = 3
-        self.lost_timeout = 2.0
+        self.lost_timeout = 1.0
         self.active_cooldowns = {}      
         self.alarm_cooldown = 300.0     
         self.alarm_radius = 200         
@@ -106,19 +106,13 @@ class StreamLoader:
         RETRIEVE_INTERVAL = 0.2  # 200ms → 5 FPS
 
         while self.running:
-            # 在锁下检查 reconnect_requested，避免与 watchdog 线程的数据竞争
-            needs_reconnect = False
-            with self.lock:
-                needs_reconnect = self.reconnect_requested
-
-            if not self.cap or not self.cap.isOpened() or needs_reconnect:
-                if self._connect():
+            if not self.cap or not self.cap.isOpened():
+                # 🚀 连接失败即停止，不自动重试
+                if not self._connect():
                     with self.lock:
-                        self.reconnect_requested = False
-                    last_retrieve_time = time.time()
-                else:
-                    time.sleep(2)
-                    continue
+                        self.output_frame = None
+                    self.running = False
+                    break
 
             try:
                 # 1. 高频 grab() — 清空 OpenCV 内部缓冲区，防止老化延迟
@@ -134,11 +128,11 @@ class StreamLoader:
                             self.latest_frame = frame
                             self.last_read_time = now
                     else:
-                        if self.running:
-                            logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失")
-                            with self.lock:
-                                self.reconnect_requested = True
-                        time.sleep(1)
+                        logger.warning(f"⚠️ Cam {self.camera_id} 信号丢失，停止拉流")
+                        with self.lock:
+                            self.output_frame = None
+                        self.running = False
+                        break
                 elif grabbed:
                     # 🚀 grab 成功但未到 retrieve 时机：短暂休眠防止 CPU 空转
                     time.sleep(0.005)
@@ -379,13 +373,10 @@ class StreamLoader:
     def _watchdog_thread(self):
         while self.running:
             with self.lock:
-                time_since_read = time.time() - self.last_read_time
-                already_reconnecting = self.reconnect_requested
-
-            if time_since_read > 5.0 and not already_reconnecting:
-                logger.warning(f"🚨 Cam {self.camera_id} 超时卡死，标记离线")
-                with self.lock:
-                    self.reconnect_requested = True
+                if time.time() - self.last_read_time > 3.0:
+                    logger.warning(f"🚨 Cam {self.camera_id} 超时卡死，停止")
+                    self.running = False
+                    break
             time.sleep(1)
 
     def start(self):
@@ -422,6 +413,8 @@ class StreamLoader:
 
     def get_latest_frame(self):
         with self.lock:
+            if time.time() - self.last_read_time > 3.0:
+                return None
             f = self.output_frame if self.output_frame is not None else self.latest_frame
             return cv2.resize(f, (1280, 720)) if f is not None else None
 
@@ -446,7 +439,7 @@ class StreamManager:
         self.lock = threading.Lock()
         self.global_ai_enabled = True
         self.app = None
-        self._heartbeat_interval = 3.0
+        self._heartbeat_interval = 1.0
 
     def _start_heartbeat_aggregator(self):
         """每 3 秒批量上报 200 路状态。"""

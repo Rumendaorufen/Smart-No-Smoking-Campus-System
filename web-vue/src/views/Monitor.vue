@@ -453,12 +453,19 @@ const enterDetail = (device: any) => {
 }
 
 const onThumbError = (event: Event, deviceId: number) => {
-  setTimeout(() => {
-    thumbVersions.value = {
-      ...thumbVersions.value,
-      [deviceId]: (thumbVersions.value[deviceId] || 0) + 1
-    }
-  }, 3000)
+  // 🚀 缩略图加载失败 → 标记离线（网格模式无 MJPEG，靠此触发）
+  deviceStore.updateDeviceState(deviceId, {
+    isVideoError: true,
+    isLoading: false
+  })
+  stopThumbTimer(deviceId)
+}
+
+const stopThumbTimer = (id: number) => {
+  if (thumbTimers[id]) {
+    clearInterval(thumbTimers[id])
+    delete thumbTimers[id]
+  }
 }
 
 const handleTreeNodeClick = (data: any) => {
@@ -495,13 +502,6 @@ const handleVideoError = (id: number) => {
         isVideoError: true,
         isLoading: false
     })
-    // 🚀 3 秒后自动重试
-    setTimeout(() => {
-        const dev = deviceList.value.find(d => d.id === id)
-        if (dev && dev.enabled) {
-            deviceStore.retryConnection(id)
-        }
-    }, 3000)
 }
 
 const handleVideoLoaded = (id: number) => {

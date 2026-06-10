@@ -86,7 +86,8 @@ def local_frame_generator(device_id):
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         else:
-            time.sleep(0.1)
+            logger.info(f"📴 [ID:{device_id}] 信号丢失，断开 MJPEG")
+            break
         time.sleep(0.04)
 
 @monitor_bp.route('/sync', methods=['POST'])
@@ -166,11 +167,7 @@ def thumbnail(device_id):
 
     loader = sm.stream_loaders.get(device_id)
     if not loader or not loader.running or loader.latest_frame is None:
-        # 返回 1x1 透明像素占位（避免前端破图）
-        return Response(
-            b'\x47\x49\x46\x38\x39\x61\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x00\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b',
-            mimetype='image/gif'
-        )
+        return "Camera Offline", 503
 
     thumb_bytes = loader.get_thumbnail()
     if thumb_bytes is None:
