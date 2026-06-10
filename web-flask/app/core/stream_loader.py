@@ -353,7 +353,7 @@ class StreamLoader:
                 '-preset', 'p1',
                 '-pix_fmt', 'yuv420p',
                 '-movflags', '+faststart',
-                '-t', '10',
+                '-t', '5',
                 ram_video_path
             ]
             success = IOThrottle.run_ffmpeg(cmd, timeout=30)
