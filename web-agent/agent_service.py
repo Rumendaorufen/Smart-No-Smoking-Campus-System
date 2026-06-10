@@ -139,7 +139,7 @@ class AgentService:
                 # 获取原本所有的工具
                 all_tools = super().get_tools()
                 # 强行过滤，只交出查询和检查语法的工具
-                return [t for t in all_tools if t.name == "sql_db_query"]
+                return [t for t in all_tools if t.name in ["sql_db_query", "sql_db_query_checker"]]
         
         # 🚀 2. 实例化我们自定义的“极速版” Toolkit
         toolkit = FastSQLToolkit(db=db, llm=llm)
