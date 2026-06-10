@@ -26,9 +26,6 @@ class SmokeEvent:
         self.is_confirmed = False 
 
 class StreamLoader:
-    MEDIATIMX_HOST = "127.0.0.1"
-    MEDIATIMX_PORT = 8554
-
     # 🚀 证据分级阈值
     EVIDENCE_VIDEO_THRESHOLD = 0.85    # ≥0.85: 快照 + 视频
     EVIDENCE_SNAPSHOT_THRESHOLD = 0.65 # 0.65~0.85: 仅快照
@@ -83,20 +80,20 @@ class StreamLoader:
             # 仅仅记录，不要抛出，防止崩掉调用它的线程
             logger.debug(f"通知 Java 失败(正常现象): {e}")
 
-    def _get_proxy_url(self, main_stream=False):
-        suffix = "_main" if main_stream else "_sub"
-        return f"rtsp://{self.MEDIATIMX_HOST}:{self.MEDIATIMX_PORT}/cam/{self.camera_id}{suffix}"
+    def _get_main_stream_url(self):
+        """返回原始 RTSP 地址供录像使用。"""
+        return self.rtsp_url
 
     def _connect(self):
+        """直连摄像头 RTSP（MediaMTX 集成推迟到 Phase 3）。"""
         try:
             if self.cap:
                 self.cap.release()
 
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;3000000|threads;1"
 
-            proxy_url = self._get_proxy_url(main_stream=False)
-            logger.info(f"🛰️ 代理拉流: {proxy_url}")
-            self.cap = cv2.VideoCapture(proxy_url, cv2.CAP_FFMPEG)
+            logger.info(f"🛰️ 直连拉流: {self.rtsp_url.split('@')[-1]}")
+            self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             if self.cap.isOpened():
@@ -108,11 +105,8 @@ class StreamLoader:
                     return True
             return False
         except Exception as e:
-            logger.error(f"💥 代理连接异常: {e}")
+            logger.error(f"💥 连接异常: {e}")
             return False
-
-    def get_main_stream_url(self):
-        return self._get_proxy_url(main_stream=True)
 
     def _reader_thread(self):
         """🚀 改造：grab() 高频清空缓冲区 + 每 200ms retrieve() 一次，防止 OpenCV 老化延迟"""
@@ -348,7 +342,7 @@ class StreamLoader:
         if conf >= self.EVIDENCE_VIDEO_THRESHOLD:
             video_name = img_name.replace('.jpg', '.mp4')
             video_path = os.path.join(self.recorder.save_dir, video_name)
-            main_url = self.get_main_stream_url()
+            main_url = self._get_main_stream_url()
 
             def record_video():
                 cmd = [
