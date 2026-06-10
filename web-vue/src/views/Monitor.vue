@@ -866,4 +866,14 @@ const viewFullScreen = (id: number) => {
 .device-search-input :deep(.el-input__inner::placeholder) {
   color: #606266;
 }
+
+/* 🚀 非 scoped 样式：强制覆盖 Element Plus 默认白色背景 */
+</style>
+<style>
+.right-panel .el-tree {
+  background-color: transparent !important;
+}
+.right-panel .el-tree-node__content {
+  background-color: transparent !important;
+}
 </style>
