@@ -27,41 +27,28 @@
 
     <div class="chat-main">
       <template v-if="currentConversationId">
-        <DynamicScroller
-          class="message-area"
-          :items="messageList"
-          :min-item-size="80"
-          page-mode
-          ref="scrollerRef"
-        >
-          <template v-slot="{ item, index, active }">
-            <DynamicScrollerItem
-              :item="item"
-              :active="active"
-              :size-dependencies="[item.content]"
-              :data-index="index"
-            >
-              <div :class="['message-item', item.role]">
-                <div class="avatar">{{ item.role === 'user' ? '我' : 'AI' }}</div>
-                <div class="bubble" :class="{ 'error-bubble': item.isError }">
-                  <div v-if="item.role === 'user'">{{ item.content }}</div>
-                  <template v-else>
-                    <div v-if="item.isThinking" class="thinking-status">
-                      <span class="loading-dots">⏳</span> AI 正在深度分析中...
-                      <span class="time-count">已耗时 {{ item.thinkTime }} 秒</span>
-                    </div>
-                    <div class="markdown-body" v-html="md.render(formatMarkdown(item.content))"></div>
-                  </template>
-                  <div v-if="item.isError" class="retry-action">
-                    <el-button type="danger" link size="small" @click="retryMessage(item.originalText)">
-                      <el-icon><RefreshRight /></el-icon> 重新发送
-                    </el-button>
+        <el-scrollbar class="message-area" ref="scrollbarRef">
+          <div class="message-list">
+            <div v-for="(msg, index) in messageList" :key="index" :class="['message-item', msg.role]">
+              <div class="avatar">{{ msg.role === 'user' ? '我' : 'AI' }}</div>
+              <div class="bubble" :class="{ 'error-bubble': msg.isError }">
+                <div v-if="msg.role === 'user'">{{ msg.content }}</div>
+                <template v-else>
+                  <div v-if="msg.isThinking" class="thinking-status">
+                    <span class="loading-dots">⏳</span> AI 正在深度分析中...
+                    <span class="time-count">已耗时 {{ msg.thinkTime }} 秒</span>
                   </div>
+                  <div class="markdown-body" v-html="md.render(formatMarkdown(msg.content))"></div>
+                </template>
+                <div v-if="msg.isError" class="retry-action">
+                  <el-button type="danger" link size="small" @click="retryMessage(msg.originalText)">
+                    <el-icon><RefreshRight /></el-icon> 重新发送
+                  </el-button>
                 </div>
               </div>
-            </DynamicScrollerItem>
-          </template>
-        </DynamicScroller>
+            </div>
+          </div>
+        </el-scrollbar>
 
         <div class="input-area">
           <el-input
@@ -100,9 +87,6 @@ import {
   deleteConversation,
   type AiConversation
 } from '../api/ai';
-import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
-import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-
 // --- Markdown 配置 ---
 const md = new MarkdownIt({ html: true, breaks: true, linkify: true });
 
@@ -124,7 +108,7 @@ const conversationList = ref<AiConversation[]>([]);
 const currentConversationId = ref<string>('');
 const inputText = ref('');
 const isTyping = ref(false);
-const scrollerRef = ref<any>(null);
+const scrollbarRef = ref<any>(null);
 
 // 🚀 消息 ID 生成器（vue-virtual-scroller 要求每个 item 必须有唯一 id）
 let msgIdCounter = 0
@@ -201,10 +185,7 @@ const selectConversation = async (id: string) => {
   try {
     const res = await getConversationMessages(id);
     if (res.code === 200 && res.data) {
-      messageList.value = res.data.map((msg: any) => ({
-        ...msg,
-        id: genMsgId()  // 🚀 历史消息补齐 id，否则 DynamicScroller 不渲染
-      }))
+      messageList.value = res.data
       scrollToBottom();
     }
   } catch (error) {
@@ -237,7 +218,7 @@ const handleSendMessage = async (retryText?: string) => {
 
   // 1. 用户消息上屏
   if (!retryText) {
-    messageList.value.push({ id: genMsgId(), role: 'user', content: trimmedText });
+    messageList.value.push({ role: 'user', content: trimmedText });
   }
   inputText.value = '';
   isTyping.value = true;
@@ -245,7 +226,6 @@ const handleSendMessage = async (retryText?: string) => {
 
   // 2. 预埋 AI 气泡，并初始化思考状态
   const aiIdx = messageList.value.push({
-    id: genMsgId(),
     role: 'ai',
     content: '',
     isThinking: true,
@@ -343,8 +323,8 @@ const retryMessage = (text?: string) => {
 
 const scrollToBottom = async () => {
   await nextTick();
-  if (scrollerRef.value) {
-    scrollerRef.value.scrollToItem(messageList.value.length - 1);
+  if (scrollbarRef.value) {
+    scrollbarRef.value.setScrollTop(99999);
   }
 };
 
