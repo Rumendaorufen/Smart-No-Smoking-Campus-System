@@ -87,7 +87,7 @@
 
           <el-table-column label="操作" width="180" fixed="right" align="center">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openVideo(row.videoUrl)">录像</el-button>
+              <el-button link type="primary" @click="openVideo(row.videoUrl, row.snapshotUrl)">录像</el-button>
               
               <el-button v-if="canEdit(row)" link type="warning" @click="openEditDialog(row)">
                 修改
@@ -118,7 +118,11 @@
     </div>
 
     <el-dialog v-model="videoVisible" title="录像回放" width="600px" destroy-on-close class="custom-dialog">
-      <video v-if="currentVideo" :src="currentVideo" controls autoplay style="width: 100%"></video>
+      <div v-if="videoError" class="video-fallback">
+        <p style="color:#909399;margin-bottom:12px">视频不完整或不可用</p>
+        <img v-if="currentSnapshot" :src="getAiFileUrl(currentSnapshot)" style="max-width:100%;border-radius:4px">
+      </div>
+      <video v-else-if="currentVideo" :src="currentVideo" controls autoplay style="width:100%" @error="videoError=true"></video>
     </el-dialog>
 
     <el-dialog v-model="editDialogVisible" title="修正审核结果" width="400px" class="custom-dialog">
@@ -176,6 +180,16 @@ const total = ref(0)
 const dateRange = ref([])
 const videoVisible = ref(false)
 const currentVideo = ref('')
+const videoError = ref(false)
+const currentSnapshot = ref('')
+
+const openVideo = (url: string, snapshotUrl?: string) => {
+  videoError.value = false
+  currentVideo.value = getAiFileUrl(url)
+  // 🚀 快照路径：从 video URL 推导（xxx.mp4 → snapshots/xxx.jpg）
+  currentSnapshot.value = snapshotUrl || url.replace('/evidence/', '/evidence/snapshots/').replace('.mp4', '.jpg')
+  videoVisible.value = true
+}
 
 const userInfoStr = localStorage.getItem('userInfo')
 const currentUser = userInfoStr ? JSON.parse(userInfoStr) : { role: 'user', id: -1 }
@@ -259,11 +273,6 @@ const handleDelete = async (id: number) => {
   } catch (error) { console.error(error) }
 }
 
-const openVideo = (url: string) => {
-  if (!url) return
-  currentVideo.value = getAiFileUrl(url)
-  videoVisible.value = true
-}
 
 const openEditDialog = (row: Alarm) => {
   currentEditRow.value = row
