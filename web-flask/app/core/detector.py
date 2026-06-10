@@ -57,8 +57,13 @@ class SmokingDetector:
         # ⚡️ 优化 2：减少记忆寿命
         # 从 5 改为 3。减少"拖泥带水"，让框跟手跟得更紧
         # 3帧约等于 100ms，足够消除闪烁，又不会产生明显拖影
-        self.grace_frames = 3  
-        self.smoke_memory = {} 
+        self.grace_frames = 3
+        self.smoke_memory = {}
+
+        # 🚀 两阶段置信度阈值
+        self.trigger_threshold = 0.55   # 触发预录
+        self.confirm_threshold = 0.80   # 确认报警
+        self.trigger_cooldown = 2.0     # 触发后等待确认/取消的秒数
 
     def detect(self, frame):
         detections = []

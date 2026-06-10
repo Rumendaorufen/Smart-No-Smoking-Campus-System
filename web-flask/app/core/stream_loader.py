@@ -8,6 +8,7 @@ import math
 from collections import defaultdict
 from app.core.detector import get_detector
 from app.core.recorder import EvidenceRecorder
+from app.core.burst_token import BurstTokenManager
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,7 +48,11 @@ class StreamLoader:
         self.alarm_radius = 200         
 
         self.reconnect_requested = False
-        self.start_lock = threading.Lock() 
+        self.start_lock = threading.Lock()
+
+        # 🚀 爆发令牌管理
+        self.burst_token_holder = False
+        self.burst_start_time = 0.0
 
     def set_ai_status(self, enabled: bool):
         with self.lock:
@@ -145,7 +150,10 @@ class StreamLoader:
                 break
 
     def _processor_thread(self):
-        """AI 处理线程 (已修正顺序以支持带框录像)"""
+        """🚀 弹性跳帧处理器：平时 2 FPS，爆发模式全帧率"""
+        last_process_time = 0.0
+        burst_token_holder = False  # 当前是否持有爆发令牌
+
         while self.running:
             frame_to_process = None
             ai_on = True
@@ -153,60 +161,101 @@ class StreamLoader:
                 if self.latest_frame is not None:
                     frame_to_process = self.latest_frame.copy()
                 ai_on = self.ai_enabled
-            
-            if frame_to_process is None:
-                time.sleep(0.1); continue
 
+            if frame_to_process is None:
+                time.sleep(0.1)
+                continue
+
+            now = time.time()
+            # 🚀 弹性跳帧判断
+            if not burst_token_holder and (now - last_process_time) < 0.5:
+                # 跳过推理但仍将帧写入 buffer（保证录像连贯）
+                frame_resized = cv2.resize(frame_to_process, (640, 480))
+                self.recorder.add_frame_no_detect(frame_resized)
+                self.recorder.process_recording()
+                time.sleep(0.01)
+                continue
+
+            last_process_time = now
             detections = []
-            
-            # 1. 跑推理逻辑
+
             if ai_on:
                 try:
                     detections = self.detector.detect(frame_to_process)
-                    detections = self._handle_alarm_logic(frame_to_process, detections)
+                    detections, burst_token_holder = self._handle_two_stage_alarm(
+                        frame_to_process, detections, burst_token_holder, now
+                    )
                 except Exception as e:
                     logger.error(f"AI Error: {e}")
 
-            # 2. 渲染画面：把框画在图上
             frame_to_process = self._draw_ui(frame_to_process, detections)
-
-            # 3. 🚀 将带框的帧存入录像机缓冲区
             self.recorder.add_frame(frame_to_process)
 
-            # 4. 更新输出预览
             with self.lock:
                 self.output_frame = frame_to_process
-            
+
             self.recorder.process_recording()
             time.sleep(0.01)
 
-    def _handle_alarm_logic(self, frame, detections):
-        current_time = time.time()
+    def _handle_two_stage_alarm(self, frame, detections, has_burst_token, now):
+        """
+        两阶段置信度 + 爆发令牌管理。
+        返回 (更新后的 detections, 是否有爆发令牌)
+        """
         persons = [d for d in detections if d['label'] == 'person']
         cigarettes = [d for d in detections if d['label'] == 'cigarette']
-        self._update_cooldowns(current_time, persons)
+
+        self._update_cooldowns(now, persons)
+
+        # ── 检查当前帧是否有任何吸烟检测 ──
+        max_conf = 0.0
+        best_cig = None
         for cig in cigarettes:
-            cid, cbox = cig.get('id', 0), cig['box']
-            event = self.smoke_events[cid]
-            event.last_seen_time = current_time
-            event.frame_count += 1
-            if event.frame_count >= self.alarm_threshold_frames:
-                cig['is_alarm'] = True
-                if not event.is_confirmed:
-                    c_cx, c_cy = (cbox[0]+cbox[2])/2, (cbox[1]+cbox[3])/2
-                    if not self._is_in_cooldown(c_cx, c_cy):
-                        event.is_confirmed = True
-                        owner_id = self._match_person_id(cbox, persons)
-                        
-                        # 🚀 录像带框的关键点：在保存快照前，先画个带框的图
-                        evidence_frame = self._draw_ui(frame.copy(), detections)
-                        self._trigger_alarm_save(evidence_frame, owner_id, cig['conf'])
-                        
-                        self._add_cooldown(owner_id, c_cx, c_cy, current_time)
-            else: cig['is_alarm'] = False
-        expired = [tid for tid, evt in self.smoke_events.items() if current_time - evt.last_seen_time > self.lost_timeout]
-        for tid in expired: del self.smoke_events[tid]
-        return detections
+            if cig['conf'] > max_conf:
+                max_conf = cig['conf']
+                best_cig = cig
+
+        # ── 爆发令牌状态机 ──
+        if has_burst_token:
+            if now - self.burst_start_time > 8.0:
+                logger.info(f"⏰ Cam {self.camera_id} 爆发令牌超时回收")
+                BurstTokenManager.release(self.camera_id)
+                has_burst_token = False
+
+        # ── 两阶段逻辑 ──
+        if max_conf >= self.detector.confirm_threshold and best_cig:
+            # Stage 2: 确认报警 (≥0.80)
+            best_cig['is_alarm'] = True
+            cbox = best_cig['box']
+            c_cx, c_cy = (cbox[0] + cbox[2]) / 2, (cbox[1] + cbox[3]) / 2
+
+            if not self._is_in_cooldown(c_cx, c_cy):
+                owner_id = self._match_person_id(cbox, persons)
+                evidence_frame = self._draw_ui(frame.copy(), detections)
+                self._trigger_alarm_save(evidence_frame, owner_id, best_cig['conf'])
+                self._add_cooldown(owner_id, c_cx, c_cy, now)
+                logger.info(f"🚨 Cam {self.camera_id} 确认报警 conf={max_conf:.2f}")
+
+            if has_burst_token:
+                BurstTokenManager.release(self.camera_id)
+                has_burst_token = False
+            return detections, False
+
+        elif max_conf >= self.detector.trigger_threshold and best_cig:
+            # Stage 1: 触发预录 (0.55 ~ 0.80)
+            if not has_burst_token:
+                if BurstTokenManager.acquire(self.camera_id, now):
+                    has_burst_token = True
+                    self.burst_start_time = now
+                    logger.info(f"🔥 Cam {self.camera_id} 获取爆发令牌 conf={max_conf:.2f}")
+
+        # ── 过期清理 ──
+        expired = [tid for tid, evt in self.smoke_events.items()
+                   if now - evt.last_seen_time > self.lost_timeout]
+        for tid in expired:
+            del self.smoke_events[tid]
+
+        return detections, has_burst_token
 
     def _update_cooldowns(self, current_time, persons):
         current_pids = {p['id']: p['box'] for p in persons}

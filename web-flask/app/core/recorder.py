@@ -55,6 +55,21 @@ class EvidenceRecorder:
                 except Exception as e:
                     logger.error(f"写入视频帧失败: {e}")
 
+    def add_frame_no_detect(self, frame):
+        """Processor 跳过推理时仍将帧写入 buffer（保证录像连贯性）"""
+        if frame is None: return
+        with self.lock:
+            frame_resized = cv2.resize(frame, (self.target_w, self.target_h))
+            now = time.time()
+            if self.buffer and (now - self.buffer[0][0]) > EvidenceRecorder.BUFFER_FLUSH_TIMEOUT:
+                self.buffer.clear()
+            self.buffer.append((now, frame_resized.copy()))
+            if self.is_recording and self.writer:
+                try:
+                    self.writer.write(frame_resized)
+                except Exception as e:
+                    logger.error(f"写入视频帧失败: {e}")
+
     def start_recording(self, filename, post_record_sec=5, width=640, height=480):
         with self.lock:
             if self.is_recording:
