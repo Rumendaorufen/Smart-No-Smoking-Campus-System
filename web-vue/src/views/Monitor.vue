@@ -779,14 +779,22 @@ const viewFullScreen = (id: number) => {
   flex-direction: column;
   overflow: hidden;
 }
-.device-tree :deep(.el-tree),
-.device-tree :deep(.el-tree__empty-block),
-.device-tree :deep(.el-tree-node__content),
-.device-tree :deep(.el-tree-node__expand-icon),
-.device-tree :deep(.el-tree-node__label) {
+.right-panel .panel-section {
+  background: rgba(22, 33, 52, 0.6);
+}
+.device-tree :deep(.el-tree) {
+  --el-fill-color: transparent;
+  --el-fill-color-light: transparent;
   background: transparent !important;
   color: #a3a6ad;
   font-size: 13px;
+}
+.device-tree :deep(.el-tree__empty-block) {
+  background: transparent;
+}
+.device-tree :deep(.el-tree-node__content) {
+  background-color: transparent !important;
+  color: #a3a6ad;
 }
 .device-tree :deep(.el-tree-node) {
   margin: 2px 0;
