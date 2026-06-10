@@ -350,8 +350,9 @@ class StreamLoader:
                 '-rtsp_transport', 'tcp',
                 '-i', main_url,
                 '-c:v', 'libx264',
-                '-preset', 'superfast',
+                '-preset', 'ultrafast',
                 '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
                 '-t', '10',
                 ram_video_path
             ]
