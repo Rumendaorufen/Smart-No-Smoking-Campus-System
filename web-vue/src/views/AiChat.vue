@@ -201,7 +201,10 @@ const selectConversation = async (id: string) => {
   try {
     const res = await getConversationMessages(id);
     if (res.code === 200 && res.data) {
-      messageList.value = res.data;
+      messageList.value = res.data.map((msg: any) => ({
+        ...msg,
+        id: genMsgId()  // 🚀 历史消息补齐 id，否则 DynamicScroller 不渲染
+      }))
       scrollToBottom();
     }
   } catch (error) {
