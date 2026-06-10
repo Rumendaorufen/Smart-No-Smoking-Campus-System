@@ -354,7 +354,7 @@ class StreamLoader:
                 '-t', '10',
                 video_path
             ]
-            success = IOThrottle.run_ffmpeg(cmd, timeout=15)
+            success = IOThrottle.run_ffmpeg(cmd, timeout=30)
             if success:
                 logger.info(f"🎥 录像完成: {video_name}")
             else:

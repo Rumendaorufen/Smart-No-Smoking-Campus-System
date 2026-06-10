@@ -51,7 +51,7 @@ class IOThrottle:
             return len(cls._active_pids)
 
     @classmethod
-    def run_ffmpeg(cls, cmd: list, timeout: int = 15) -> bool:
+    def run_ffmpeg(cls, cmd: list, timeout: int = 30) -> bool:
         """
         带限流和超时的 FFmpeg 执行包装。
 
