@@ -15,14 +15,21 @@ class EvidenceRecorder:
     def __init__(self, save_dir="app/static/evidence", fps=25, pre_record_sec=2,
                  ram_disk_dir="R:/evidence"):
         self.save_dir = os.path.abspath(save_dir)        # SSD 长期存储
-        self.ram_disk_dir = ram_disk_dir                 # 内存盘临时存储
         self.fps = fps
         self.pre_record_sec = pre_record_sec
 
         os.makedirs(self.save_dir, exist_ok=True)
         os.makedirs(os.path.join(self.save_dir, "snapshots"), exist_ok=True)
-        os.makedirs(self.ram_disk_dir, exist_ok=True)
-        os.makedirs(os.path.join(self.ram_disk_dir, "snapshots"), exist_ok=True)
+
+        # 🚀 检测 RAM 盘是否存在，不存在则回退到 SSD
+        self.ram_disk_dir = ram_disk_dir
+        if os.path.exists("R:\\"):
+            os.makedirs(self.ram_disk_dir, exist_ok=True)
+            os.makedirs(os.path.join(self.ram_disk_dir, "snapshots"), exist_ok=True)
+            logger.info("💾 使用 ImDisk 内存盘: %s", self.ram_disk_dir)
+        else:
+            self.ram_disk_dir = self.save_dir
+            logger.info("💾 内存盘不可用，回退到 SSD: %s", self.save_dir)
 
         # 🚀 改用 deque(maxlen=10)，每帧带时间戳
         self.buffer = deque(maxlen=10)  # type: deque[tuple[float, cv2.Mat]]
