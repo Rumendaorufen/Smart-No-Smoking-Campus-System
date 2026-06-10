@@ -516,8 +516,22 @@ watch(deviceList, (newList) => {
   }
 }, { deep: true })
 
+// 🚀 页面可见性变化时自动恢复
+const onVisibilityChange = () => {
+  if (document.hidden) return
+  // 用户切回页面时：刷新设备列表、重连 WebSocket、重启缩略图
+  deviceStore.fetchDevices(true)
+  if (!stompClient || !stompClient.connected) {
+    initWebSocket()
+  }
+  if (Object.keys(thumbTimers).length === 0 && deviceList.value.length > 0) {
+    startThumbTimers()
+  }
+  fetchSystemStatus()
+}
+
 onMounted(() => {
-  // 1. 时间显示逻辑 (保持不变)
+  // 1. 时间显示
   const updateTime = () => {
     const now = new Date()
     currentTime.value = now.toLocaleTimeString('zh-CN', { hour12: false })
@@ -535,9 +549,12 @@ onMounted(() => {
   // 3. WebSocket 初始化
   initWebSocket()
 
-  // 4. 🚀 同步系统状态（AI开关）
+  // 4. 同步系统状态
   fetchSystemStatus()
   statusPollingTimer = setInterval(fetchSystemStatus, 3000)
+
+  // 5. 🚀 页面切回时自动恢复
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onUnmounted(() => {
@@ -547,9 +564,9 @@ onUnmounted(() => {
     clearInterval(statusPollingTimer)
     statusPollingTimer = null
   }
-  // 🚀 清理缩略图定时器
   Object.values(thumbTimers).forEach(clearInterval)
   thumbTimers = {}
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
 const viewFullScreen = (id: number) => {
