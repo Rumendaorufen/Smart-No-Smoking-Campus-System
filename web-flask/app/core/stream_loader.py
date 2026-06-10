@@ -26,10 +26,8 @@ class SmokeEvent:
         self.is_confirmed = False 
 
 class StreamLoader:
-    # 🚀 证据分级阈值
-    # 快照无条件保存（报警确认即存）
-    # 视频仅高置信度录制（存储成本高）
-    EVIDENCE_VIDEO_THRESHOLD = 0.85    # ≥0.85: 加录视频
+    # 🚀 报警确认即存快照 + 录视频
+    # IOThrottle Semaphore=2 限流并发写盘，RAM 盘中转保护 SSD
 
     def __init__(self, camera_id: int, rtsp_url: str, app=None):
         self.camera_id = camera_id
@@ -339,32 +337,31 @@ class StreamLoader:
             self.recorder.move_to_persistent(ram_path)
         snapshot_url = f"static/evidence/snapshots/{img_name}"
 
-        # 🚀 仅高置信度 (≥0.85) 录制视频（存储成本高）
+        # 🚀 报警确认即录视频（IOThrottle Semaphore=2 限流 + RAM 盘中转）
         video_url = ""
-        if conf >= self.EVIDENCE_VIDEO_THRESHOLD:
-            video_name = img_name.replace('.jpg', '.mp4')
-            video_path = os.path.join(self.recorder.save_dir, video_name)
-            main_url = self._get_main_stream_url()
+        video_name = img_name.replace('.jpg', '.mp4')
+        video_path = os.path.join(self.recorder.save_dir, video_name)
+        main_url = self._get_main_stream_url()
 
-            def record_video():
-                cmd = [
-                    'ffmpeg', '-y',
-                    '-rtsp_transport', 'tcp',
-                    '-i', main_url,
-                    '-vcodec', 'copy',
-                    '-ss', '0',
-                    '-noaccurate_seek',
-                    '-t', '10',
-                    video_path
-                ]
-                success = IOThrottle.run_ffmpeg(cmd, timeout=15)
-                if success:
-                    logger.info(f"🎥 录像完成: {video_name}")
-                else:
-                    logger.warning(f"⚠️ 录像失败或超时: {video_name}")
+        def record_video():
+            cmd = [
+                'ffmpeg', '-y',
+                '-rtsp_transport', 'tcp',
+                '-i', main_url,
+                '-vcodec', 'copy',
+                '-ss', '0',
+                '-noaccurate_seek',
+                '-t', '10',
+                video_path
+            ]
+            success = IOThrottle.run_ffmpeg(cmd, timeout=15)
+            if success:
+                logger.info(f"🎥 录像完成: {video_name}")
+            else:
+                logger.warning(f"⚠️ 录像失败或超时: {video_name}")
 
-            threading.Thread(target=record_video, daemon=True).start()
-            video_url = f"static/evidence/{video_name}"
+        threading.Thread(target=record_video, daemon=True).start()
+        video_url = f"static/evidence/{video_name}"
 
         # 🚀 通知 Java
         def notify_java():
