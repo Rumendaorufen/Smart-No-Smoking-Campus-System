@@ -272,7 +272,7 @@
       v-model="showAiChat"
       title="🤖 智能分析数据助理"
       size="800px" 
-      :destroy-on-close="false"
+      :destroy-on-close="true"
       class="ai-chat-drawer"
     >
       <AiChat />
