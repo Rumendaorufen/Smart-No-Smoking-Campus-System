@@ -10,8 +10,6 @@ from collections import defaultdict
 from app.core.detector import get_detector
 from app.core.recorder import EvidenceRecorder
 from app.core.burst_token import BurstTokenManager
-from app.core.io_throttle import IOThrottle
-
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -26,8 +24,7 @@ class SmokeEvent:
         self.is_confirmed = False 
 
 class StreamLoader:
-    # 🚀 报警确认即存快照 + 录视频
-    # IOThrottle Semaphore=2 限流并发写盘，RAM 盘中转保护 SSD
+    # 🚀 报警确认即存快照 + 录视频（利用 processor 线程已有帧）
 
     def __init__(self, camera_id: int, rtsp_url: str, app=None):
         self.camera_id = camera_id
@@ -78,10 +75,6 @@ class StreamLoader:
         except Exception as e: 
             # 仅仅记录，不要抛出，防止崩掉调用它的线程
             logger.debug(f"通知 Java 失败(正常现象): {e}")
-
-    def _get_main_stream_url(self):
-        """返回原始 RTSP 地址供录像使用。"""
-        return self.rtsp_url
 
     def _connect(self):
         """直连摄像头 RTSP（MediaMTX 集成推迟到 Phase 3）。"""
@@ -337,32 +330,10 @@ class StreamLoader:
             self.recorder.move_to_persistent(ram_path)
         snapshot_url = f"static/evidence/snapshots/{img_name}"
 
-        # 🚀 报警确认即录视频（IOThrottle Semaphore=2 限流 + RAM 盘中转）
-        video_url = ""
+        # 🚀 报警确认即录视频（使用 processor 已有帧，不走第二次 RTSP 连接）
         video_name = img_name.replace('.jpg', '.mp4')
-        # 🚀 先写入 RAM 盘，完成后才移到 SSD（防止浏览器读到未写完的文件）
-        ram_video_path = os.path.join(self.recorder.ram_disk_dir, video_name)
-        main_url = self._get_main_stream_url()
-
-        def record_video():
-            logger.info(f"🎬 录像线程启动: {video_name}")
-            cmd = [
-                'ffmpeg', '-y',
-                '-rtsp_transport', 'tcp',
-                '-i', main_url,
-                '-c', 'copy',
-                '-t', '5',
-                ram_video_path
-            ]
-            success = IOThrottle.run_ffmpeg(cmd, timeout=30)
-            if success:
-                # 录像完成 → 从 RAM 盘移到 SSD
-                ssd_path = self.recorder.move_to_persistent(ram_video_path)
-                logger.info(f"🎥 录像完成: {ssd_path}")
-            else:
-                logger.warning(f"⚠️ 录像失败或超时: {video_name}")
-
-        threading.Thread(target=record_video, daemon=True).start()
+        self.recorder.start_recording(video_name, post_record_sec=5, width=640, height=480)
+        logger.info(f"🎬 录像启动: {video_name}")
         video_url = f"static/evidence/{video_name}"
 
         # 🚀 通知 Java

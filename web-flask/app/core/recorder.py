@@ -124,10 +124,15 @@ class EvidenceRecorder:
         with self.lock:
             if not self.is_recording or self.writer is None:
                 return
+            ram_path = self.current_video_path
             self.writer.release()
             self.writer = None
             self.is_recording = False
-        logger.info(f"🛑 录制闭合: {os.path.basename(self.current_video_path)}")
+        if ram_path and self.ram_disk_dir != self.save_dir:
+            ssd_path = self.move_to_persistent(ram_path)
+            logger.info(f"🎥 录像完成: {os.path.basename(ssd_path)}")
+        else:
+            logger.info(f"🛑 录制闭合: {os.path.basename(ram_path)}")
 
     def save_snapshot(self, frame, filename):
         if frame is None: return
