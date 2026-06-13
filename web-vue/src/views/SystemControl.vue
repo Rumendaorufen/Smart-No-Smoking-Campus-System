@@ -46,19 +46,23 @@
         <el-card class="status-card info-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>磁盘存储 (Evidence)</span>
+              <span>磁盘存储</span>
+              <el-select v-model="selectedMount" size="small" style="width:100px" @change="onDiskChange">
+                <el-option v-for="d in systemStats.disks" :key="d.mount" :label="d.mount" :value="d.mount" />
+              </el-select>
               <el-icon><Coin /></el-icon>
             </div>
           </template>
-          <div class="disk-info">
-            <el-progress 
-              type="circle" 
-              :percentage="systemStats.disk.percent" 
+          <div v-if="currentDisk" class="disk-info">
+            <el-progress
+              type="circle"
+              :percentage="currentDisk.percent"
               :color="diskColor"
               :width="100"
             />
             <div class="disk-text">
-              剩余 <span>{{ systemStats.disk.free }} GB</span>
+              剩余 <span>{{ currentDisk.free }} GB</span>
+              <div style="font-size:11px;color:#606266;margin-top:4px">共 {{ currentDisk.total }} GB</div>
             </div>
           </div>
         </el-card>
@@ -212,8 +216,19 @@ const systemStats = reactive({
   totalStreams: 0, globalAi: false,
   gpu: { used: 0, total: 0, memPercent: 0, name: 'N/A' },
   disk: { total: 0, used: 0, free: 0, percent: 0 },
+  disks: [] as Array<{ mount: string; total: number; free: number; percent: number }>,
   business: { todayAlarms: 0, pendingAudit: 0, bootTime: '-' }
 })
+const selectedMount = ref('')
+const currentDisk = computed(() => systemStats.disks.find(d => d.mount === selectedMount.value))
+const onDiskChange = (mount: string) => {
+  const d = systemStats.disks.find(x => x.mount === mount)
+  if (!d) return
+  selectedMount.value = mount
+  systemStats.disk.percent = d.percent
+  systemStats.disk.free = d.free
+  systemStats.disk.total = d.total
+}
 
 const deviceList = ref<Device[]>([])
 const aiLoading = ref(false), batchLoading = ref(false)
@@ -297,6 +312,10 @@ const fetchStatus = async () => {
       systemStats.ramUsed = d.ramUsed || 0
       systemStats.gpu = d.gpu || systemStats.gpu
       systemStats.disk = d.disk || systemStats.disk
+      systemStats.disks = d.disks || systemStats.disks
+      if (!selectedMount.value && systemStats.disks.length > 0) {
+        selectedMount.value = systemStats.disks[0].mount
+      }
       
       const biz = d.business || {}
       systemStats.business.todayAlarms = biz.todayAlarms || 0

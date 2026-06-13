@@ -57,10 +57,34 @@ public class SystemMonitorService {
             long totalMem = memory.getTotal();
             long usedMem = totalMem - memory.getAvailable();
 
-            // 3. 磁盘 (Disk)
-            OSFileStore store = os.getFileSystem().getFileStores().get(0);
-            long totalDisk = store.getTotalSpace();
-            long freeDisk = store.getUsableSpace();
+            // 3. 磁盘 (Disk) — 收集所有盘符，前端可切换
+            List<Map<String, Object>> diskList = new ArrayList<>();
+            OSFileStore evidenceStore = null;
+            for (OSFileStore fs : os.getFileSystem().getFileStores()) {
+                Map<String, Object> d = new HashMap<>();
+                String mount = fs.getMount();
+                long total = fs.getTotalSpace();
+                long free = fs.getUsableSpace();
+                d.put("mount", mount);
+                d.put("total", NumberUtil.round(total / 1024.0 / 1024.0 / 1024.0, 1).doubleValue());
+                d.put("free", NumberUtil.round(free / 1024.0 / 1024.0 / 1024.0, 1).doubleValue());
+                d.put("percent", NumberUtil.round((double)(total - free) / total * 100, 1).doubleValue());
+                diskList.add(d);
+                // 匹配证据目录所在盘
+                if (total > 0 && "D:\\engineering\\Smart No-Smoking Campus System\\web-flask\\app\\static\\evidence".startsWith(mount)) {
+                    evidenceStore = fs;
+                }
+            }
+            systemCache.put("disks", diskList);
+
+            // 默认展示证据盘（或第一个盘）
+            if (evidenceStore == null) evidenceStore = os.getFileSystem().getFileStores().get(0);
+            long totalDisk = evidenceStore.getTotalSpace();
+            long freeDisk = evidenceStore.getUsableSpace();
+            Map<String, Object> diskData = new HashMap<>();
+            diskData.put("percent", NumberUtil.round((double)(totalDisk - freeDisk)/totalDisk * 100, 1).doubleValue());
+            diskData.put("free", NumberUtil.round(freeDisk / 1024.0 / 1024.0 / 1024.0, 1).doubleValue());
+            systemCache.put("disk", diskData);
 
             // 4. GPU (静态获取名称，实时负载需 Python 辅助)
             Map<String, Object> gpuData = new HashMap<>();
@@ -69,18 +93,12 @@ public class SystemMonitorService {
                 gpuData.put("name", graphicsCards.get(0).getName());
                 gpuData.put("memPercent", 0);
             }
+            systemCache.put("gpu", gpuData);
 
             // 更新缓存 (平铺结构，方便前端直接读取)
             systemCache.put("cpu", NumberUtil.round(cpuLoad, 1).doubleValue());
             systemCache.put("ramPercent", NumberUtil.round((double) usedMem / totalMem * 100, 1).doubleValue());
             systemCache.put("ramUsed", NumberUtil.round(usedMem / 1024.0 / 1024.0 / 1024.0, 2).doubleValue());
-
-            Map<String, Object> diskData = new HashMap<>();
-            diskData.put("percent", NumberUtil.round((double)(totalDisk - freeDisk)/totalDisk * 100, 1).doubleValue());
-            diskData.put("free", NumberUtil.round(freeDisk / 1024.0 / 1024.0 / 1024.0, 1).doubleValue());
-            systemCache.put("disk", diskData);
-
-            systemCache.put("gpu", gpuData);
             systemCache.put("global_ai", globalAiEnabled); // 🚀 确保同步到前端
 
         } catch (Exception e) {
