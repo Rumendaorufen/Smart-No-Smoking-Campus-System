@@ -38,4 +38,13 @@ ai:
     url: "http://127.0.0.1:5050/api/agent/chat" # 确保和你 Python app.py 的端口一致
 
 app:
+  public-base-url: "https://your_ngrok_url.ngrok.io"
   python-static-path: D:/engineering/Smart No-Smoking Campus System/web-flask/app # 🚀 修改为你 Python 项目的 app 目录绝对路径
+
+# 5. 飞书通知配置
+notification:
+  feishu:
+    enabled: true
+    webhook-url: "https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook_url"
+    app-id: "cli_your_app_id"
+    app-secret: "your_app_secret"
