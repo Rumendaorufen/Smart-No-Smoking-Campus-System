@@ -1,0 +1,46 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: smart-campus-backend
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3308/smart_campus_smoking?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password:
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+    mongodb:
+      uri: mongodb://localhost:27017/smart_campus_logs
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto
+
+ai:
+  agent:
+    url: "http://127.0.0.1:5050/api/agent/chat"
+
+app:
+  public-base-url: "https://your-ngrok-url.ngrok-free.app"
+  python-static-path: /path/to/web-flask/app
+
+# 飞书通知配置（复制此文件为 application.yml 并填入真实值）
+notification:
+  feishu:
+    enabled: true
+    webhook-url: ""
+    app-id: ""
+    app-secret: ""
+    sign-secret: ""
