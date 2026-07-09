@@ -150,8 +150,8 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void saveInternalAlarm(Integer deviceId, String type, Double confidence,
-                                  String snapshotUrl, String videoUrl) {
+    public Alarm saveInternalAlarm(Integer deviceId, String type, Double confidence,
+                                   String snapshotUrl, String videoUrl) {
         Alarm alarm = new Alarm();
 
         alarm.setCameraId(deviceId);
@@ -180,10 +180,13 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
                         log.warn("获取设备名称失败: {}", e.getMessage());
                     }
 
+                    log.info("告警事务已提交，准备发送飞书通知, alarmId={}, device={}", alarm.getId(), deviceName);
                     final String name = deviceName;
                     CompletableFuture.runAsync(() ->
                         feishuNotificationService.notifyAlarm(alarm, name));
                 }
             });
+
+        return alarm;
     }
 }

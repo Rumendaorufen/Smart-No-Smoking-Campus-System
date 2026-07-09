@@ -11,5 +11,6 @@ public class FeishuConfig {
     private String webhookUrl;
     private String appId;
     private String appSecret;
+    private String signSecret;
     private boolean enabled = true;
 }

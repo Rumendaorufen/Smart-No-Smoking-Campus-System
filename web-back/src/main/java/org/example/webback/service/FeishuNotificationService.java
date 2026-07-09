@@ -7,8 +7,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
@@ -26,6 +32,11 @@ public class FeishuNotificationService {
 
     @Value("${app.public-base-url}")
     private String publicBaseUrl;
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        log.info("飞书通知服务已加载, enabled={}, webhookUrl={}", feishuConfig.isEnabled(), feishuConfig.getWebhookUrl());
+    }
 
     public void notifyAlarm(Alarm alarm, String deviceName) {
         if (!feishuConfig.isEnabled()) {
@@ -49,8 +60,17 @@ public class FeishuNotificationService {
             body.put("msg_type", "interactive");
             body.put("card", card);
 
-            restTemplate.postForEntity(feishuConfig.getWebhookUrl(), body, String.class);
-            log.info("飞书告警通知已发送, alarmId={}, device={}", alarm.getId(), deviceName);
+            // 飞书签名校验（如果配置了 signSecret）
+            addSignature(body);
+
+            ResponseEntity<String> response = restTemplate.postForEntity(
+                    feishuConfig.getWebhookUrl(), body, String.class);
+            log.info("飞书 Webhook 响应: status={}, body={}", response.getStatusCode(), response.getBody());
+            if (response.getBody() != null && !response.getBody().contains("\"code\":0")) {
+                log.error("飞书 Webhook 返回错误: {}", response.getBody());
+            } else {
+                log.info("飞书告警通知已发送, alarmId={}, device={}", alarm.getId(), deviceName);
+            }
         } catch (Exception e) {
             log.error("飞书 Webhook 发送失败: {}", e.getMessage());
         }
@@ -113,5 +133,27 @@ public class FeishuNotificationService {
         field.put("is_short", true);
         field.put("text", text);
         return field;
+    }
+
+    private void addSignature(Map<String, Object> body) {
+        String secret = feishuConfig.getSignSecret();
+        if (secret == null || secret.isBlank()) return;
+
+        try {
+            long timestamp = System.currentTimeMillis() / 1000;
+            String stringToSign = timestamp + "\n" + secret;
+
+            Mac mac = Mac.getInstance("HmacSHA256");
+            SecretKeySpec keySpec = new SecretKeySpec(
+                    stringToSign.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            mac.init(keySpec);
+            byte[] signBytes = mac.doFinal(new byte[0]);
+            String sign = Base64.getEncoder().encodeToString(signBytes);
+
+            body.put("timestamp", String.valueOf(timestamp));
+            body.put("sign", sign);
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            log.warn("飞书签名计算失败: {}", e.getMessage());
+        }
     }
 }
