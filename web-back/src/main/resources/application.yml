@@ -41,11 +41,11 @@ app:
   public-base-url: "https://smoke-campus.ngrok-free.app"
   python-static-path: D:/engineering/Smart No-Smoking Campus System/web-flask/app # 🚀 修改为你 Python 项目的 app 目录绝对路径
 
-# 5. 飞书通知配置
+# 5. 飞书通知配置（密钥通过环境变量注入）
 notification:
   feishu:
     enabled: true
-    webhook-url: "https://open.feishu.cn/open-apis/bot/v2/hook/b7b0b91a-ba2f-4f29-acf8-a16c4dc0133e"
-    app-id: "cli_aac5949794b89bc0"
-    app-secret: "Ua9Qv0HEyqPGjms0MdIt1chEaRw1bHL6"
-    sign-secret: "XgT7bTbgxUwiCV9VRC3V9"
+    webhook-url: "${FEISHU_WEBHOOK_URL}"
+    app-id: "${FEISHU_APP_ID}"
+    app-secret: "${FEISHU_APP_SECRET}"
+    sign-secret: "${FEISHU_SIGN_SECRET}"
