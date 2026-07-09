@@ -1,17 +1,23 @@
 package org.example.webback.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.Collections;
 
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
+
+    @Value("${app.python-static-path}")
+    private String pythonStaticPath;
+
     @Configuration
     public class RestConfig {
         @Bean
@@ -32,9 +38,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        // 允许所有路径跨域
         registry.addMapping("/**")
-                .allowedOriginPatterns("*") // 允许所有来源
+                .allowedOriginPatterns("*")
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true)
@@ -42,15 +47,20 @@ public class WebMvcConfig implements WebMvcConfigurer {
     }
 
     @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        registry.addResourceHandler("/static/**")
+                .addResourceLocations("file:" + pythonStaticPath + "/");
+    }
+
+    @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new JwtInterceptor())
-                .addPathPatterns("/api/**") // 拦截所有 /api 开头的请求
+                .addPathPatterns("/api/**")
                 .excludePathPatterns(
-                        "/api/auth/login",    // 放行登录
+                        "/api/auth/login",
                         "/api/internal/**",
-                        "/api/monitor/stream/**", // 放行视频流相关(如果有)
-                        "/api/internal/**",   // 放行 Python 内部调用的接口(建议加 IP 白名单，这里暂且放行)
-                                // 🚀 必须加上这一行，允许 Python 不带 Token 访问
+                        "/api/monitor/stream/**",
+                        "/api/internal/**",
                         "/api/monitor/devices/sync-status",
                         "/api/alerts/report",
                         "/api/logs/**"
