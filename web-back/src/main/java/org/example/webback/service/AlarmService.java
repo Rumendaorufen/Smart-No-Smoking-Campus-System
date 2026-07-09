@@ -5,37 +5,49 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.example.webback.entity.Alarm;
+import org.example.webback.entity.Device;
 import org.example.webback.mapper.AlarmMapper;
 import org.example.webback.mapper.DeviceMapper;
 import org.example.webback.mapper.UserMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.io.File;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
 public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
+
+    private static final Logger log = LoggerFactory.getLogger(AlarmService.class);
 
     @Autowired
     private DeviceMapper deviceMapper;
     @Autowired
     private UserMapper userMapper;
 
-    @Value("${app.python-static-path}") // 🚀 注入刚才配置的路径
+    @Autowired
+    private FeishuNotificationService feishuNotificationService;
+    @Autowired
+    private DeviceService deviceService;
+
+    @Value("${app.python-static-path}")
     private String pythonStaticPath;
 
     private void fillExtraInfo(IPage<Alarm> page) {
         List<Alarm> records = page.getRecords();
         if (CollectionUtils.isEmpty(records)) return;
 
-        // 收集 ID 并过滤 null
         Set<Integer> cameraIds = records.stream()
                 .map(Alarm::getCameraId)
                 .filter(Objects::nonNull)
@@ -46,7 +58,6 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
-        // 🚀 修复点：显式转换 ID 类型以匹配 Map 的 Key
         Map<Integer, String> deviceMap = new HashMap<>();
         if (!cameraIds.isEmpty()) {
             deviceMapper.selectBatchIds(cameraIds).forEach(d -> {
@@ -109,11 +120,9 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
         Alarm alarm = this.getById(id);
         if (alarm == null) return;
 
-        // 1. 先删除物理文件
         deletePhysicalFile(alarm.getRoiUrl());
         deletePhysicalFile(alarm.getVideoUrl());
 
-        // 2. 再删除数据库记录
         this.removeById(id);
         System.out.println("✅ 记录 ID:" + id + " 及其关联物理文件已清理");
     }
@@ -122,11 +131,7 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
         if (!StringUtils.hasText(webPath)) return;
 
         try {
-            // webPath 示例: "/static/evidence/snapshots/alarm_xxx.jpg"
-            // 我们需要去掉开头的 "/" 并拼接到 Python 的 app 目录下
             String relativePath = webPath.startsWith("/") ? webPath.substring(1) : webPath;
-
-            // 构造绝对路径
             File file = new File(pythonStaticPath, relativePath);
 
             if (file.exists()) {
@@ -144,28 +149,41 @@ public class AlarmService extends ServiceImpl<AlarmMapper, Alarm> {
         }
     }
 
-    // 在 AlarmService 类中添加
-
-    /**
-     * 将 AI 引擎的数据持久化到数据库
-     */
     @Transactional(rollbackFor = Exception.class)
     public void saveInternalAlarm(Integer deviceId, String type, Double confidence,
                                   String snapshotUrl, String videoUrl) {
         Alarm alarm = new Alarm();
 
-        // 映射关系
-        alarm.setCameraId(deviceId);           // 对应数据库 camera_id
-        alarm.setType(type);                   // 对应数据库 type (SMOKING)
-        alarm.setConfidence((double) confidence.floatValue()); // 转换为 float
-        alarm.setRoiUrl(snapshotUrl);          // 对应数据库 roi_url
-        alarm.setVideoUrl(videoUrl);           // 对应数据库 video_url
+        alarm.setCameraId(deviceId);
+        alarm.setType(type);
+        alarm.setConfidence((double) confidence.floatValue());
+        alarm.setRoiUrl(snapshotUrl);
+        alarm.setVideoUrl(videoUrl);
 
-        // 初始状态
-        alarm.setAuditStatus(0);               // 0-待审核
+        alarm.setAuditStatus(0);
         alarm.setCreatedAt(LocalDateTime.now());
 
-        // 执行插入 (MyBatis Plus 提供的方法)
         this.save(alarm);
+
+        // 事务提交后异步发送飞书通知
+        TransactionSynchronizationManager.registerSynchronization(
+            new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    String deviceName = "未知";
+                    try {
+                        Device device = deviceService.getById(deviceId);
+                        if (device != null) {
+                            deviceName = device.getName();
+                        }
+                    } catch (Exception e) {
+                        log.warn("获取设备名称失败: {}", e.getMessage());
+                    }
+
+                    final String name = deviceName;
+                    CompletableFuture.runAsync(() ->
+                        feishuNotificationService.notifyAlarm(alarm, name));
+                }
+            });
     }
 }
