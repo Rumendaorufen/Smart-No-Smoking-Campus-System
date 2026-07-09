@@ -130,6 +130,16 @@ RTSP 流 → grab/retrieve (5 FPS) → 全局单例检测器
 - 流式 SSE 输出，Markdown 表格和列表渲染
 - 多会话管理，对话历史持久化
 
+### 飞书告警通知
+- 新告警产生时自动发送飞书消息卡片到群聊
+- 卡片包含：设备名称 / 告警类型 / 置信度 / 时间 / 内嵌截图
+- 基于飞书开放平台自定义应用，通过 Webhook 机器人发送卡片
+- HMAC-SHA256 签名校验保障 webhook 安全
+- 截图自动上传飞书图床（需 `im:resource` 权限）
+- 异步非阻塞发送，不影响告警入库主流程
+- 支持 `enabled` 开关，随时启停
+- 公网地址通过 ngrok 隧道暴露本地静态资源
+
 ### 集中化日志（MongoDB）
 - **MongoAppender**：Java 中台通过 Logback 自定义 Appender 异步写入 MongoDB
 - **MongoHandler**：Python 引擎异步日志写入同一 MongoDB 集合
@@ -325,7 +335,12 @@ npm run dev
 | `spring.data.redis` | Redis 连接 |
 | `spring.data.mongodb` | MongoDB 连接（可选） |
 | `ai.agent.url` | Python AI Agent 地址 (`http://127.0.0.1:5050/api/agent/chat`) |
-| `app.python-static-path` | web-flask 的 `app/` 目录绝对路径 |
+| `notification.feishu.enabled` | 飞书通知总开关（true/false） |
+| `notification.feishu.webhook-url` | 飞书群机器人 Webhook 地址 |
+| `notification.feishu.app-id` | 飞书开放平台应用 App ID |
+| `notification.feishu.app-secret` | 飞书开放平台应用 App Secret |
+| `notification.feishu.sign-secret` | 飞书签名校验密钥（如开启） |
+| `app.public-base-url` | ngrok 公网地址，用于拼接截图 URL |
 
 ### web-vue (`.env`)
 
