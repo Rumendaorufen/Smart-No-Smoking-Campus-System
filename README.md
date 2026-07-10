@@ -313,8 +313,7 @@ npm run dev
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `DATABASE_URL` | 模板值 | 预留数据库连接；当前视觉主链路不直接访问 MySQL |
-| `JAVA_API_URL` | `/api/internal/alarm/report` | 视觉服务报警上报地址 |
-| `JAVA_DEVICE_LIST_URL` | `/api/internal/devices` | 视觉服务设备同步地址 |
+| `JAVA_BASE_URL` | 无默认值 | Java 中台地址；报警、设备同步和心跳路径由代码统一拼接 |
 | `SECRET_KEY` | 模板值 | 本地必须覆盖 |
 | `MONGODB_LOG_URI` | 模板值 | Python 集中日志连接 |
 | `INTERNAL_API_TOKEN` | 无默认值 | Flask 调用 Java 内部接口的共享服务令牌，至少 32 字符 |
