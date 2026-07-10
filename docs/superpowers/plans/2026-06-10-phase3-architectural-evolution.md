@@ -1,4 +1,8 @@
-# Phase 3: 架构蜕变 实施计划
+﻿# Phase 3: 架构蜕变 实施计划
+
+> 文档状态：历史设计/实施记录。本文保留当时的目标、步骤和代码片段，不代表当前运行基线。
+> 当前行为请以仓库根目录 `README.md`、现行配置模板和源代码为准；文中的端口、路径、性能指标或配置文件可能已随实现演进。
+
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -28,10 +28,10 @@
 
 智慧校园禁烟监控系统是一套完整的 AI 视觉监测与数据分析平台。系统通过 **四服务协同架构**（Python AI 引擎 + Java 业务中台 + LangChain 智能问答 + Vue3 前端大屏），实现对校园 RTSP 监控视频流的实时吸烟行为识别、报警推送、人工仲裁以及自然语言数据分析。
 
-**核心突破**：
+**当前实现能力**：
 
-- 采用**级联 ROI 检测 + Batch 批处理 + FP16 半精度**，单张 RTX 3060 即可承载 200+ 路并发
-- **弹性跳帧**：平时 2 FPS 推理，爆发时 25 FPS，GPU 算力释放 90%
+- 采用**级联 ROI 检测 + Batch 批处理 + FP16 半精度**；`200+` 路是扩容设计目标，当前提交没有对应的可复现压测结论
+- **弹性跳帧**：常态约 2 FPS 推理；爆发令牌会取消 0.5 秒跳帧限制，但 reader 当前约 5 FPS，因此并非 25 FPS 输入
 - **两阶段置信度**：0.50 触发预录 + 跨帧累计确认，兼顾灵敏度与误报率
 - 引入**大模型 SQL Agent**，用自然语言直接查询报警数据，无需编写 SQL
 - Java 中台统一鉴权与业务编排，Python 专注于 AI 推理，职责清晰
@@ -76,7 +76,7 @@ RTSP 流 → grab/retrieve (5 FPS) → 全局单例检测器
                                           │
                         ┌─────────────────┘
                         ▼
-             弹性跳帧 (平时 2 FPS / 爆发 25 FPS)
+             弹性跳帧 (常态约 2 FPS / 爆发上限受 5 FPS reader 限制)
                         │
                         ▼
              Stage 1: YOLOv8s 全局找人 (ByteTrack)
@@ -102,7 +102,7 @@ RTSP 流 → grab/retrieve (5 FPS) → 全局单例检测器
 ### 实时监控
 - 多路 RTSP 视频流并发处理（grab/retrieve，5 FPS）
 - 网格模式（缩略图 JPG 定时刷新 + jitter 打散并发） + 详情模式（单路 MJPEG）
-- 弹性跳帧：平时 2 FPS 推理，爆发时 25 FPS（令牌桶控制，最多 3 路）
+- 弹性跳帧：常态约 2 FPS；爆发令牌取消处理器跳帧，但当前 reader 约 5 FPS（最多 3 路同时持有令牌）
 - 设备在线/离线状态实时检测，自动重连巡检（每 30s）
 - WebSocket 实时推送报警弹窗 + 设备状态增量推送
 
@@ -144,7 +144,7 @@ RTSP 流 → grab/retrieve (5 FPS) → 全局单例检测器
 - **MongoAppender**：Java 中台通过 Logback 自定义 Appender 异步写入 MongoDB
 - **MongoHandler**：Python 引擎异步日志写入同一 MongoDB 集合
 - **TraceId 传播**：HTTP 请求头 `X-Trace-Id` 在服务间透传，端到端链路追踪
-- **前端日志**：浏览器日志通过 `POST /api/logs/submit` 采集
+- **前端日志**：浏览器日志通过 `POST /api/logs` 采集
 
 ### 系统管控
 - CPU / 内存 / GPU / 磁盘 实时图表（ECharts）
@@ -223,7 +223,7 @@ Smart No-Smoking Campus System/
 │   └── test_sql_agent.py          # 命令行测试入口
 │
 ├── db/                            # 数据库
-│   └── smart_campus_smoking.sql   # 完整建表/视图/测试数据
+│   └── smart_campus_smoking.sql   # 完整建表/视图（不含账号和业务种子数据）
 │
 ├── development log/               # 开发日志
 │   ├── 开发计划.md                # 初始 8 周开发计划
@@ -248,7 +248,7 @@ Smart No-Smoking Campus System/
 |------|----------|------|
 | Python | 3.9+ | web-flask, web-agent |
 | Java JDK | 17+ | web-back |
-| Node.js | 16+ | web-vue |
+| Node.js | 20+（建议） | web-vue（Vite 7） |
 | MySQL | 8.0 | 业务数据库 |
 | CUDA | 11.8+ (可选) | GPU 推理加速 |
 | FFmpeg | 任意 | 证据视频 H.264 编码（full build 可选） |
@@ -261,14 +261,14 @@ Smart No-Smoking Campus System/
 mysql -u root -p -P 3308 < db/smart_campus_smoking.sql
 ```
 
-脚本包含：5 张基表（users/devices/alarms/ai_conversations/ai_chat_history）、4 个 AI 只读视图、测试数据。
+脚本包含：5 张基表（users/devices/alarms/ai_conversations/ai_chat_history）和 4 个 AI 只读视图；当前脚本不再附带测试账号或业务数据。
 
 ### 2. 启动 Python AI 引擎（web-flask）
 
 ```bash
 cd web-flask
 pip install -r requirements.txt
-# 修改 config.py 中的数据库连接和 Java 地址
+# 按 .env.example 创建本地 .env；PyTorch/CUDA 按运行机器单独核对
 python run.py
 # 服务运行在 http://0.0.0.0:5000
 ```
@@ -288,7 +288,8 @@ python app.py
 
 ```bash
 cd web-back
-# 修改 src/main/resources/application.yml 中的数据库连接
+# 复制 src/main/resources/application.yml.example 为 application.yml
+# 修改数据库连接
 # 以及 ai.agent.url 和 app.python-static-path
 mvn spring-boot:run
 # 服务运行在 http://localhost:8080
@@ -303,18 +304,21 @@ npm run dev
 # 开发环境运行在 http://localhost:5173
 ```
 
-默认账号：`admin` / 密码见数据库 users 表。
+初始化脚本不创建默认账号，需要通过受控初始化流程写入 BCrypt 密码用户。
 
 ## 配置说明
 
-### web-flask (`config.py`)
+### web-flask (`.env` / `config.py`)
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `SQLALCHEMY_DATABASE_URI` | `mysql+pymysql://root:...@localhost:3308/smart_campus_smoking` | 数据库连接 |
-| `JAVA_API_URL` | `http://localhost:8080/api/internal/alarm/report` | 报警上报地址 |
-| `JAVA_DEVICE_LIST_URL` | `http://localhost:8080/api/monitor/devices` | 设备同步地址 |
-| `BUFFER_SIZE` | `150` | 视频帧缓存大小 |
+| `DATABASE_URL` | 模板值 | 预留数据库连接；当前视觉主链路不直接访问 MySQL |
+| `JAVA_API_URL` | `/api/internal/alarm/report` | 配置预留；当前 `stream_loader.py` 的实际上报路径仍为 `/api/alerts/report` |
+| `JAVA_DEVICE_LIST_URL` | `/api/monitor/devices` | 配置预留；当前同步代码实际调用 `/api/internal/devices` |
+| `SECRET_KEY` | 模板值 | 本地必须覆盖 |
+| `MONGODB_LOG_URI` | 模板值 | Python 集中日志连接 |
+
+> 当前部分 Java URL 仍硬编码在 `monitor.py`、`stream_loader.py` 中；修改端口时需同步检查这些文件。
 
 ### web-agent (`.env`)
 
@@ -327,7 +331,7 @@ npm run dev
 | `DB_INCLUDE_TABLES` | 4 个 `ai_*` 视图 | 允许查询的视图列表 |
 | `AGENT_PORT` | `5050` | 服务端口 |
 
-### web-back (`application.yml`)
+### web-back (`application.yml.example` → 本地 `application.yml`)
 
 | 配置项 | 说明 |
 |--------|------|
@@ -362,10 +366,10 @@ npm run dev
 | `PUT` | `/api/monitor/devices/{id}` | 更新设备（admin） |
 | `DELETE` | `/api/monitor/devices/{id}` | 删除设备（admin） |
 | `POST` | `/api/monitor/devices/sync-status` | Python 状态同步（内部，旧） |
-| `POST` | `/api/monitor/devices/batch-sync` | Python 批量心跳（每 3s） |
+| `POST` | `/api/monitor/devices/batch-sync` | Python 批量心跳（当前聚合循环约每 1s） |
 | `GET` | `/api/monitor/devices/delta` | 增量对账接口（带 version 参数） |
 | `GET` | `/api/internal/devices` | 设备列表（内部白名单） |
-| `POST` | `/api/internal/alarm/report` | 报警上报（内部） |
+| `POST` | `/api/internal/alarm/report` | 兼容的内部报警入口；当前视觉服务实际上报 `/api/alerts/report` |
 | `GET` | `/api/alerts/pending` | 待审核报警 |
 | `POST` | `/api/alerts/{id}/audit` | 提交审核 |
 | `GET` | `/api/alerts/archive` | 历史档案查询 |
@@ -379,14 +383,14 @@ npm run dev
 | `POST` | `/api/system/control/global_ai_db` | 同步 AI 开关状态 |
 | `GET` | `/actuator/health` | Spring Boot 健康检查（AIOps 监控用） |
 | `GET` | `/actuator/metrics` | 运行时性能指标（AIOps 监控用） |
-| `POST` | `/api/logs/submit` | 前端日志采集 |
+| `POST` | `/api/logs` | 前端日志采集 |
 
 ### Python AI 引擎 (5000)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/v1/health` | 服务健康检查（含 GPU 利用率、活跃流数） |
-| `GET` | `/api/v1/metrics` | 实时性能指标（Prometheus 格式） |
+| `GET` | `/api/v1/metrics` | 实时性能指标（JSON） |
 | `GET` | `/api/v1/monitor/stream/{id}` | 视频流 (MJPEG) |
 | `GET` | `/api/v1/monitor/thumbnail/{id}` | 缩略图 (320x240 JPG) |
 | `POST` | `/api/v1/monitor/sync` | 触发设备同步 |
