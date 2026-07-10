@@ -200,8 +200,8 @@ Smart No-Smoking Campus System/
 │   │   │   ├── recorder.py        # EvidenceRecorder (预录缓冲+并发录像)
 │   │   │   ├── burst_token.py     # 爆发令牌桶 (全局 Semaphore)
 │   │   │   ├── io_throttle.py     # IO 限流 (Semaphore+taskkill)
-│   │   │   ├── worker_manager.py  # 多进程 Worker 管理器
-│   │   │   └── worker_main.py     # Worker 子进程入口
+│   │   │   ├── worker_manager.py  # 实验性多进程管理器（当前入口未启用）
+│   │   │   └── worker_main.py     # 实验性 Worker 入口（尚未接入动态设备）
 │   │   ├── api/
 │   │   │   ├── monitor.py         # 视频流/设备同步/点火保护
 │   │   │   └── system.py          # 全局AI开关

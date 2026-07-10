@@ -442,7 +442,7 @@ class StreamManager:
         self._heartbeat_interval = 1.0
 
     def _start_heartbeat_aggregator(self):
-        """每 3 秒批量上报 200 路状态。"""
+        """按 heartbeat interval 批量上报当前已加载设备状态。"""
         import threading
         def aggregate_and_report():
             while True:

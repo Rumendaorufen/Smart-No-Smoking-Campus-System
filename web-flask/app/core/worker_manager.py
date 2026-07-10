@@ -1,5 +1,9 @@
 """
-Master 进程的 Worker 管理器。
+实验性的多进程 Worker 管理器（当前启动链路未启用）。
+
+当前生产入口 ``run.py`` 只运行全局 ``StreamManager``。本模块保留用于
+后续完成动态设备分片、Worker 帧处理和主进程 API 路由后的架构演进，
+不得与当前 ``StreamManager`` 同时启动，否则会产生重复拉流和报警。
 
 启动时根据 GPU 和 camera 总量，将摄像头分片到多个 Worker 进程。
 

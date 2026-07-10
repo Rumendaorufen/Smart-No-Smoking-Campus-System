@@ -1,5 +1,8 @@
 """
-Worker 子进程入口。
+实验性的 Worker 子进程入口（当前启动链路未启用）。
+
+该实现尚未根据 ``camera_ids`` 创建摄像头流，也未接入 Flask 的视频输出；
+在这些能力完成前，仅由实验性 ``WorkerManager`` 引用。
 
 每个 Worker 拥有独立的：
 - StreamManager + SmokingDetector
