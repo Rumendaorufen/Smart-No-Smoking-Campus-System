@@ -19,6 +19,8 @@ import threading
 import logging
 import time
 from typing import List
+from app.core.java_client import internal_headers
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +78,9 @@ class WorkerManager:
                 try:
                     alarm = self.alarm_queue.get(timeout=1)
                     requests.post(
-                        "http://localhost:8080/api/alerts/report",
+                        Config.JAVA_API_URL,
                         json=alarm,
+                        headers=internal_headers(),
                         timeout=3
                     )
                 except Exception:

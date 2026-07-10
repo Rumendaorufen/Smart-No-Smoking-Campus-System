@@ -15,6 +15,15 @@ import java.util.Collections;
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
+    private final JwtInterceptor jwtInterceptor;
+    private final InternalApiInterceptor internalApiInterceptor;
+
+    public WebMvcConfig(org.example.webback.service.JwtService jwtService,
+                        @Value("${internal.api-token}") String internalApiToken) {
+        this.jwtInterceptor = new JwtInterceptor(jwtService);
+        this.internalApiInterceptor = new InternalApiInterceptor(internalApiToken);
+    }
+
     @Value("${app.python-static-path}")
     private String pythonStaticPath;
 
@@ -54,11 +63,18 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new JwtInterceptor())
+        registry.addInterceptor(internalApiInterceptor)
+                .addPathPatterns(
+                        "/api/internal/**",
+                        "/api/monitor/devices/sync-status",
+                        "/api/monitor/devices/batch-sync",
+                        "/api/alerts/report"
+                );
+
+        registry.addInterceptor(jwtInterceptor)
                 .addPathPatterns("/api/**")
                 .excludePathPatterns(
                         "/api/auth/login",
-                        "/api/internal/**",
                         "/api/monitor/stream/**",
                         "/api/internal/**",
                         "/api/monitor/devices/sync-status",

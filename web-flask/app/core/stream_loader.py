@@ -10,6 +10,8 @@ from collections import defaultdict
 from app.core.detector import get_detector
 from app.core.recorder import EvidenceRecorder
 from app.core.burst_token import BurstTokenManager
+from app.core.java_client import internal_headers
+from config import Config
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -65,11 +67,10 @@ class StreamLoader:
     def _update_db_status(self, status):
         """同步状态至 Java 后端 (增加严谨的超时和异常捕获)"""
         try:
-            java_sync_url = "http://localhost:8080/api/monitor/devices/sync-status"
-            # 🚀 必须设置 timeout，且捕获所有异常
             requests.post(
-                java_sync_url, 
-                json={"id": self.camera_id, "status": status}, 
+                Config.JAVA_STATUS_SYNC_URL,
+                json={"id": self.camera_id, "status": status},
+                headers=internal_headers(),
                 timeout=1.0  # 给 1 秒足够了
             )
         except Exception as e: 
@@ -333,14 +334,14 @@ class StreamLoader:
         # 🚀 通知 Java
         def notify_java():
             try:
-                requests.post("http://localhost:8080/api/alerts/report", json={
+                requests.post(Config.JAVA_API_URL, json={
                     "deviceId": self.camera_id, "type": "SMOKING",
                     "confidence": round(float(conf), 2),
                     "snapshotUrl": snapshot_url,
                     "videoUrl": video_url,
                     "personId": owner_id,
                     "description": f"人员{owner_id or '未知'}吸烟"
-                }, timeout=3)
+                }, headers=internal_headers(), timeout=3)
             except Exception as e:
                 logger.error(f"Java 中台上报失败 CID={self.camera_id}: {e}")
 
@@ -458,8 +459,9 @@ class StreamManager:
 
                     if batch:
                         requests.post(
-                            "http://localhost:8080/api/monitor/devices/batch-sync",
+                            Config.JAVA_BATCH_SYNC_URL,
                             json=batch,
+                            headers=internal_headers(),
                             timeout=2.0
                         )
                 except Exception:

@@ -13,15 +13,20 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     
-    # ✅ Java 后端地址配置 (在这里集中管理)
-    # 1. 报警上报接口
+    JAVA_BASE_URL = os.environ.get('JAVA_BASE_URL', 'http://localhost:8080').rstrip('/')
     JAVA_API_URL = os.environ.get(
-        'JAVA_API_URL', 'http://localhost:8080/api/internal/alarm/report'
+        'JAVA_API_URL', f'{JAVA_BASE_URL}/api/internal/alarm/report'
     )
-    # 2. 设备列表同步接口 (如果有的话)
     JAVA_DEVICE_LIST_URL = os.environ.get(
-        'JAVA_DEVICE_LIST_URL', 'http://localhost:8080/api/monitor/devices'
+        'JAVA_DEVICE_LIST_URL', f'{JAVA_BASE_URL}/api/internal/devices'
     )
+    JAVA_STATUS_SYNC_URL = os.environ.get(
+        'JAVA_STATUS_SYNC_URL', f'{JAVA_BASE_URL}/api/monitor/devices/sync-status'
+    )
+    JAVA_BATCH_SYNC_URL = os.environ.get(
+        'JAVA_BATCH_SYNC_URL', f'{JAVA_BASE_URL}/api/monitor/devices/batch-sync'
+    )
+    INTERNAL_API_TOKEN = os.environ.get('INTERNAL_API_TOKEN', '').strip()
     
     # 视频流缓存配置 (保存最近 150 帧，约 5 秒)
     BUFFER_SIZE = 150  

@@ -313,12 +313,13 @@ npm run dev
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `DATABASE_URL` | 模板值 | 预留数据库连接；当前视觉主链路不直接访问 MySQL |
-| `JAVA_API_URL` | `/api/internal/alarm/report` | 配置预留；当前 `stream_loader.py` 的实际上报路径仍为 `/api/alerts/report` |
-| `JAVA_DEVICE_LIST_URL` | `/api/monitor/devices` | 配置预留；当前同步代码实际调用 `/api/internal/devices` |
+| `JAVA_API_URL` | `/api/internal/alarm/report` | 视觉服务报警上报地址 |
+| `JAVA_DEVICE_LIST_URL` | `/api/internal/devices` | 视觉服务设备同步地址 |
 | `SECRET_KEY` | 模板值 | 本地必须覆盖 |
 | `MONGODB_LOG_URI` | 模板值 | Python 集中日志连接 |
+| `INTERNAL_API_TOKEN` | 无默认值 | Flask 调用 Java 内部接口的共享服务令牌，至少 32 字符 |
 
-> 当前部分 Java URL 仍硬编码在 `monitor.py`、`stream_loader.py` 中；修改端口时需同步检查这些文件。
+> Flask 到 Java 的内部调用统一从 `JAVA_BASE_URL`/各端点环境变量读取，并携带 `X-Internal-Token`。
 
 ### web-agent (`.env`)
 
@@ -368,8 +369,8 @@ npm run dev
 | `POST` | `/api/monitor/devices/sync-status` | Python 状态同步（内部，旧） |
 | `POST` | `/api/monitor/devices/batch-sync` | Python 批量心跳（当前聚合循环约每 1s） |
 | `GET` | `/api/monitor/devices/delta` | 增量对账接口（带 version 参数） |
-| `GET` | `/api/internal/devices` | 设备列表（内部白名单） |
-| `POST` | `/api/internal/alarm/report` | 兼容的内部报警入口；当前视觉服务实际上报 `/api/alerts/report` |
+| `GET` | `/api/internal/devices` | 设备列表（需要 `X-Internal-Token`） |
+| `POST` | `/api/internal/alarm/report` | 视觉服务报警上报（需要 `X-Internal-Token`） |
 | `GET` | `/api/alerts/pending` | 待审核报警 |
 | `POST` | `/api/alerts/{id}/audit` | 提交审核 |
 | `GET` | `/api/alerts/archive` | 历史档案查询 |

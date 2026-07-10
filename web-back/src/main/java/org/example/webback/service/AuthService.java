@@ -1,11 +1,9 @@
 package org.example.webback.service;
 
 import cn.hutool.core.map.MapUtil;
-import cn.hutool.jwt.JWTUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.webback.entity.User;
 import org.example.webback.mapper.UserMapper;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -15,18 +13,22 @@ import java.util.Map;
 @Service
 public class AuthService {
 
-    @Autowired
-    private UserMapper userMapper;
+    private final UserMapper userMapper;
+    private final BCryptPasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
 
-    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
-    // 密钥 (实际开发请放入 application.yml)
-    private static final byte[] JWT_KEY = "your_secret_key".getBytes();
+    public AuthService(UserMapper userMapper,
+                       BCryptPasswordEncoder passwordEncoder,
+                       JwtService jwtService) {
+        this.userMapper = userMapper;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtService = jwtService;
+    }
 
     /**
      * 登录逻辑
      */
     public Map<String, Object> login(String username, String password, String ip) {
-        System.out.println("前端传来的原始密码是: [" + password + "]");
         // 1. 查用户
         User user = userMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, username));
@@ -37,8 +39,6 @@ public class AuthService {
 
         // 2. 校验密码 (如果你是刚从 Python 迁移，且旧密码是明文/旧算法，这里可能需要兼容)
         // 这里假设是新用户或已重置为 BCrypt 密码
-        System.out.println("数据库存的密文: [" + user.getPassword() + "], 长度: " + user.getPassword().length());
-        System.out.println("校验结果: " + passwordEncoder.matches(password, user.getPassword()));
         if (!passwordEncoder.matches(password, user.getPassword())) {
             throw new RuntimeException("密码错误");
         }
@@ -54,7 +54,8 @@ public class AuthService {
         userMapper.updateById(user);
 
         // 5. 生成 Token
-        String token = JWTUtil.createToken(MapUtil.of("uid", user.getId()), JWT_KEY);
+        String token = jwtService.createToken(user.getId().longValue());
+        user.setPassword(null);
 
         return MapUtil.builder(new java.util.HashMap<String, Object>())
                 .put("token", token)

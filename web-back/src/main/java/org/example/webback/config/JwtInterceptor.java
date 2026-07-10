@@ -1,10 +1,9 @@
 package org.example.webback.config;
 
-import cn.hutool.jwt.JWT;
-import cn.hutool.jwt.JWTUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.example.webback.common.Result;
+import org.example.webback.service.JwtService;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,8 +11,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 // 拦截器逻辑
 public class JwtInterceptor implements HandlerInterceptor {
 
-    // 密钥 (和 AuthService 里保持一致，建议放 yml)
-    private static final byte[] JWT_KEY = "your_secret_key".getBytes();
+    private final JwtService jwtService;
+
+    public JwtInterceptor(JwtService jwtService) {
+        this.jwtService = jwtService;
+    }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
@@ -35,15 +37,14 @@ public class JwtInterceptor implements HandlerInterceptor {
         }
 
         // 3. 校验 Token
-        if (!StringUtils.hasText(token) || !JWTUtil.verify(token, JWT_KEY)) {
+        if (!StringUtils.hasText(token)) {
             returnAuthError(response, "未登录或 Token 已过期");
-            return false; // 拦截
+            return false;
         }
 
         try {
-            // 4. 解析 Token 获取 uid
-            JWT jwt = JWTUtil.parseToken(token);
-            Long uid = Long.valueOf(jwt.getPayload("uid").toString());
+            // 4. 统一验证签名并解析 uid
+            Long uid = jwtService.verifyAndGetUserId(token);
 
             // ✅ 关键：把 uid 存入 request，Controller 里 @RequestAttribute("uid") 才能拿到
             request.setAttribute("uid", uid);

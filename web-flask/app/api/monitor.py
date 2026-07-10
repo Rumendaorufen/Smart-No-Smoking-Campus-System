@@ -5,6 +5,8 @@ import cv2
 import builtins
 import logging
 import threading
+from config import Config
+from app.core.java_client import internal_headers
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -31,7 +33,11 @@ def _do_sync():
     try:
         # 注意：这里访问的是你刚在 Java 侧 Exclude 放行的 internal 接口
         logger.info("📡 正在向 Java 侧同步设备列表 (Internal Channel)...")
-        resp = requests.get("http://localhost:8080/api/internal/devices", timeout=3.0)
+        resp = requests.get(
+            Config.JAVA_DEVICE_LIST_URL,
+            headers=internal_headers(),
+            timeout=3.0,
+        )
         
         if resp.status_code == 200:
             data_json = resp.json()
