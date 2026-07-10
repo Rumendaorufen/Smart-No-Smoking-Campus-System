@@ -16,6 +16,10 @@ def get_detector():
     return _DETECTOR_INSTANCE
 
 class SmokingDetector:
+    SMOKE_CONFIDENCE = 0.40
+    TRIGGER_CONFIDENCE = 0.40
+    CONFIRM_CONFIDENCE = 0.60
+
     def __init__(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         
@@ -46,7 +50,7 @@ class SmokingDetector:
         
         # 烟头检测参数
         self.smoke_imgsz = 640
-        self.smoke_conf = 0.50
+        self.smoke_conf = self.SMOKE_CONFIDENCE
 
         self.max_persons_per_frame = 5 
         
@@ -61,9 +65,9 @@ class SmokingDetector:
         self.smoke_memory = {}
 
         # 🚀 两阶段置信度阈值
-        # smoke_conf=0.40 所以 trigger 也要同步到 0.40，否则检出被空挡过滤
-        self.trigger_threshold = 0.40   # 触发预录（与 smoke_conf 一致）
-        self.confirm_threshold = 0.60   # 确认报警
+        # 候选过滤与预触发保持一致，避免 0.40-0.49 候选在模型层被提前丢弃。
+        self.trigger_threshold = self.TRIGGER_CONFIDENCE
+        self.confirm_threshold = self.CONFIRM_CONFIDENCE
         self.trigger_cooldown = 2.0     # 触发后等待确认/取消的秒数
 
     def detect(self, frame):
