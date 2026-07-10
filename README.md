@@ -65,7 +65,7 @@ graph TD
 | 服务 | 端口 | 技术栈 | 核心职责 |
 |------|------|--------|----------|
 | **web-vue** | 5173 | Vue 3 + Element Plus + Pinia + ECharts | 监控网格大屏、报警仲裁、设备管理、AI 对话、缩略图网格 |
-| **web-back** | 8080 | Spring Boot 3 + MyBatis-Plus + WebSocket + STOMP | 鉴权、业务 CRUD、SSE 代理、设备状态同步、WebSocket 增量推送、批量心跳接收 |
+| **web-back** | 8080 | Spring Boot 3 + MyBatis-Plus + WebSocket + STOMP | JWT 用户鉴权、内部服务 Token 鉴权、业务 CRUD、SSE 代理、设备状态同步、WebSocket 增量推送 |
 | **web-flask** | 5000 | Flask + YOLOv8 + OpenCV | RTSP 拉流(grab/retrieve)、弹性跳帧推理、爆发令牌桶、两阶段置信度、证据录制(RAM→SSD)、缩略图接口、自动重连巡检 |
 | **web-agent** | 5050 | Flask + LangChain + SQLDatabaseToolkit | 自然语言→SQL→数据分析报告（流式 SSE） |
 
@@ -133,7 +133,7 @@ RTSP 流 → grab/retrieve (5 FPS) → 全局单例检测器
 ### 飞书告警通知
 - 新告警产生时自动发送飞书消息卡片到群聊
 - 卡片包含：设备名称 / 告警类型 / 置信度 / 时间 / 内嵌截图
-- 基于飞书开放平台自定义应用，通过 Webhook 机器人发送卡片
+- 通过飞书群机器人 Webhook 发送卡片；配置 App ID/App Secret 后可先上传告警截图并取得 `image_key`
 - HMAC-SHA256 签名校验保障 webhook 安全
 - 截图自动上传飞书图床（需 `im:resource` 权限）
 - 异步非阻塞发送，不影响告警入库主流程
@@ -176,7 +176,7 @@ Smart No-Smoking Campus System/
 ├── web-back/                      # Java Spring Boot 中台 (port 8080)
 │   └── src/main/
 │       ├── java/org/example/webback/
-│       │   ├── controller/        # 7 个控制器
+│       │   ├── controller/        # 9 个控制器（含日志与健康指标接口）
 │       │   │   ├── AlarmController    # 报警审核/档案/上报
 │       │   │   ├── DeviceController   # 设备 CRUD/状态同步
 │       │   │   ├── AiChatController   # AI 对话/流式代理
@@ -190,13 +190,14 @@ Smart No-Smoking Campus System/
 │       │   ├── mapper/            # 数据访问层
 │       │   └── config/            # Security/WebSocket/JWT/MyBatis
 │       └── resources/
-│           └── application.yml    # 数据源/Redis/MongoDB/AI地址
+│           └── application.yml.example # 本地 application.yml 配置模板
 │
 ├── web-flask/                     # Python AI 引擎 (port 5000)
 │   ├── app/
 │   │   ├── core/
 │   │   │   ├── stream_loader.py   # StreamLoader + StreamManager(全局)
 │   │   │   ├── detector.py        # SmokingDetector (双模型级联+Batch+FP16)
+│   │   │   ├── best.pt            # 自定义烟头检测模型
 │   │   │   ├── recorder.py        # EvidenceRecorder (预录缓冲+并发录像)
 │   │   │   ├── burst_token.py     # 爆发令牌桶 (全局 Semaphore)
 │   │   │   ├── io_throttle.py     # IO 限流 (Semaphore+taskkill)
@@ -210,7 +211,6 @@ Smart No-Smoking Campus System/
 │   ├── yolov8m.pt                 # 中型模型 (备用)
 │   ├── yolov8n.pt                 # Nano 模型 (备用)
 │   ├── yolov8n-pose.pt            # 姿态模型 (旧版遗留)
-│   ├── best.pt                    # 自定义烟头模型 (位于 app/core/)
 │   ├── run.py                     # 启动入口
 │   └── config.py                  # 数据库/Java地址配置
 │
@@ -267,8 +267,10 @@ mysql -u root -p -P 3308 < db/smart_campus_smoking.sql
 
 ```bash
 cd web-flask
+copy .env.example .env
 pip install -r requirements.txt
-# 按 .env.example 创建本地 .env；PyTorch/CUDA 按运行机器单独核对
+# 编辑 .env；JAVA_BASE_URL 与 INTERNAL_API_TOKEN 为必填项
+# PyTorch/CUDA 组合需按运行机器单独核对
 python run.py
 # 服务运行在 http://0.0.0.0:5000
 ```
@@ -288,9 +290,8 @@ python app.py
 
 ```bash
 cd web-back
-# 复制 src/main/resources/application.yml.example 为 application.yml
-# 修改数据库连接
-# 以及 ai.agent.url 和 app.python-static-path
+copy src\main\resources\application.yml.example src\main\resources\application.yml
+# 配置数据库、JWT_SECRET、INTERNAL_API_TOKEN、AI 地址和静态文件目录
 mvn spring-boot:run
 # 服务运行在 http://localhost:8080
 ```
@@ -338,6 +339,8 @@ npm run dev
 | `spring.datasource` | 数据库连接（url/username/password） |
 | `spring.data.redis` | Redis 连接 |
 | `spring.data.mongodb` | MongoDB 连接（可选） |
+| `jwt.secret` / `JWT_SECRET` | 浏览器用户 JWT 签名密钥 |
+| `internal.api-token` / `INTERNAL_API_TOKEN` | Python→Java 内部接口共享 Token；必须与 web-flask 一致 |
 | `ai.agent.url` | Python AI Agent 地址 (`http://127.0.0.1:5050/api/agent/chat`) |
 | `notification.feishu.enabled` | 飞书通知总开关（true/false） |
 | `notification.feishu.webhook-url` | 飞书群机器人 Webhook 地址 |
@@ -365,11 +368,12 @@ npm run dev
 | `POST` | `/api/monitor/devices` | 添加设备（admin） |
 | `PUT` | `/api/monitor/devices/{id}` | 更新设备（admin） |
 | `DELETE` | `/api/monitor/devices/{id}` | 删除设备（admin） |
-| `POST` | `/api/monitor/devices/sync-status` | Python 状态同步（内部，旧） |
-| `POST` | `/api/monitor/devices/batch-sync` | Python 批量心跳（当前聚合循环约每 1s） |
+| `POST` | `/api/monitor/devices/sync-status` | Python 单设备状态同步（内部 Token，兼容接口） |
+| `POST` | `/api/monitor/devices/batch-sync` | Python 批量心跳（内部 Token，当前聚合循环约每 1s） |
 | `GET` | `/api/monitor/devices/delta` | 增量对账接口（带 version 参数） |
 | `GET` | `/api/internal/devices` | 设备列表（需要 `X-Internal-Token`） |
 | `POST` | `/api/internal/alarm/report` | 视觉服务报警上报（需要 `X-Internal-Token`） |
+| `POST` | `/api/alerts/report` | 视觉服务报警上报（内部 Token，兼容路径） |
 | `GET` | `/api/alerts/pending` | 待审核报警 |
 | `POST` | `/api/alerts/{id}/audit` | 提交审核 |
 | `GET` | `/api/alerts/archive` | 历史档案查询 |
@@ -427,6 +431,11 @@ npm run dev
 | `ai_audit_stats_view` | 审核人员工作效率统计 |
 
 ### 安全设计
+
+- 浏览器业务接口由 `JwtInterceptor` 校验 Bearer Token；登录、视频流、内部接口和日志采集等路径按代码显式排除
+- Python→Java 的设备同步、批量心跳和报警上报使用 `X-Internal-Token`，不使用用户 JWT
+- `application.yml`、各服务 `.env` 是本地文件，不应提交；仓库只维护 `.example` 模板
+- 当前 JWT 实现校验签名和用户 ID，但未实现令牌过期校验；上线前需要确认并补强
 
 AI Agent 使用专用账号 `ai_reader`，仅拥有 4 个视图的 `SELECT` + `SHOW VIEW` 权限和 `ai_chat_history` 的 `SELECT/INSERT` 权限。即使 LLM 被诱导生成恶意 SQL，MySQL 引擎层也会直接拒绝。
 
