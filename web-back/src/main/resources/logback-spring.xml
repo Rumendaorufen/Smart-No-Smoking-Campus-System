@@ -7,7 +7,7 @@
     </appender>
 
     <appender name="MONGO" class="org.example.webback.log.MongoAppender">
-        <connectionUri>mongodb://root:copilot123@localhost:27017/smart_campus_logs?authSource=admin</connectionUri>
+        <connectionUri>${MONGODB_LOG_URI:-mongodb://localhost:27017/smart_campus_logs}</connectionUri>
         <databaseName>smart_campus_logs</databaseName>
         <collectionName>logs</collectionName>
     </appender>

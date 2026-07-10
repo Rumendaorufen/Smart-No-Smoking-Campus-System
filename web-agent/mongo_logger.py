@@ -1,6 +1,7 @@
 import atexit
 import json
 import logging
+import os
 import queue
 import threading
 import re
@@ -19,10 +20,13 @@ class MongoHandler(logging.Handler):
         logging.getLogger().addHandler(handler)
     """
 
-    def __init__(self, uri="mongodb://root:copilot123@localhost:27017/smart_campus_logs?authSource=admin", database="smart_campus_logs",
+    def __init__(self, uri=None, database="smart_campus_logs",
                  collection="logs", batch_size=50, flush_interval=1.0):
         super().__init__()
         self._queue = queue.Queue()
+        uri = uri or os.environ.get(
+            "MONGODB_LOG_URI", "mongodb://localhost:27017/smart_campus_logs"
+        )
         self._client = pymongo.MongoClient(uri)
         self._col = self._client[database][collection]
         self._batch_size = batch_size

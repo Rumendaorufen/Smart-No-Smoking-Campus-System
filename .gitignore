@@ -19,6 +19,12 @@ static/
 debug_evidence/
 
 # Environment files
+.env
+**/.env
+web-vue/.env
+web-agent/.env
+web-flask/.env
+web-back/src/main/resources/application.yml
 .env.local
 .env.*.local
 .env.development.local
@@ -109,6 +115,4 @@ web-flask/static/evidence/*.avi
 web-flask/static/snapshots/*.png
 
 
-#web-agent/.env --- IGNORE ---
-web-agent/.env/
 web-agent/env/

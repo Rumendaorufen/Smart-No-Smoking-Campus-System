@@ -1,4 +1,4 @@
-/*
+﻿/*
  Navicat Premium Data Transfer
 
  Source Server         : localhost_3308
@@ -34,10 +34,6 @@ CREATE TABLE `ai_chat_history`  (
 -- ----------------------------
 -- Records of ai_chat_history
 -- ----------------------------
-INSERT INTO `ai_chat_history` VALUES (141, '5c24598e805349129814709eb69a66d8', '{\"data\": {\"id\": null, \"name\": null, \"type\": \"human\", \"content\": \"最近一周的报警趋势\", \"example\": false, \"additional_kwargs\": {}, \"response_metadata\": {}}, \"type\": \"human\"}', '2026-04-23 21:56:37');
-INSERT INTO `ai_chat_history` VALUES (142, '5c24598e805349129814709eb69a66d8', '{\"data\": {\"id\": null, \"name\": null, \"type\": \"ai\", \"content\": \"最近一周的报警趋势显示整体报警数量较低，仅在4月22日和23日有少量报警记录。\\n\\n**数据概览**：\\n\\n| 日期 | 报警总数 | 已确认 | 误报 | 待处理 |\\n| :--- | :---: | :---: | :---: | :---: |\\n| 2026-04-23 | **1** | 0 | 0 | 1 |\\n| 2026-04-22 | **2** | 1 | 0 | 1 |\\n\\n**趋势分析**：\\n- 报警活动集中在最近两天，此前5天无报警记录\\n- 已确认的报警占比为 **33.3%**（3起报警中1起已确认）\\n- 待处理报警占比为 **66.7%**，需关注审核进度\\n- 未出现误报，设备检测准确率表现良好\", \"example\": false, \"tool_calls\": [], \"usage_metadata\": null, \"additional_kwargs\": {}, \"response_metadata\": {}, \"invalid_tool_calls\": []}, \"type\": \"ai\"}', '2026-04-23 21:56:37');
-INSERT INTO `ai_chat_history` VALUES (143, '5c24598e805349129814709eb69a66d8', '{\"data\": {\"id\": null, \"name\": null, \"type\": \"human\", \"content\": \"昨天情况\", \"example\": false, \"additional_kwargs\": {}, \"response_metadata\": {}}, \"type\": \"human\"}', '2026-04-23 22:04:48');
-INSERT INTO `ai_chat_history` VALUES (144, '5c24598e805349129814709eb69a66d8', '{\"data\": {\"id\": null, \"name\": null, \"type\": \"ai\", \"content\": \"昨天（2026-04-22）共发生 **2** 起报警，其中 **1** 起已确认、**1** 起待处理，无漏报和误报。\\n\\n**数据详情**：\\n\\n| 指标 | 数值 |\\n| :--- | :---: |\\n| 报警总数 | **2** |\\n| 已确认 | **1** |\\n| 待处理 | **1** |\\n| 误报 | **0** |\\n| 已忽略 | **0** |\\n| 活跃设备数 | **1** |\\n| 平均置信度 | **0.72** |\\n\\n**情况分析**：\\n- 确认率为 **50%**，仍有1起报警待审核\\n- 未出现误报，设备检测准确性良好\\n- 平均置信度为 **0.72**，处于中等水平\\n- 建议尽快完成待处理报警的审核工作\", \"example\": false, \"tool_calls\": [], \"usage_metadata\": null, \"additional_kwargs\": {}, \"response_metadata\": {}, \"invalid_tool_calls\": []}, \"type\": \"ai\"}', '2026-04-23 22:04:48');
 
 -- ----------------------------
 -- Table structure for ai_conversations
@@ -57,19 +53,6 @@ CREATE TABLE `ai_conversations`  (
 -- ----------------------------
 -- Records of ai_conversations
 -- ----------------------------
-INSERT INTO `ai_conversations` VALUES ('0325ae909b4e4788899aab676be06b4f', 1, '你好', 1, '2026-04-23 19:57:06', '2026-04-23 20:55:50');
-INSERT INTO `ai_conversations` VALUES ('0a40c78980384bc2a2a8367019016a98', 1, '今日未处理数', 1, '2026-04-23 21:00:28', '2026-04-23 21:55:56');
-INSERT INTO `ai_conversations` VALUES ('205a634b70d8476d84b185f7801e5729', 1, '你好', 1, '2026-04-23 18:31:00', '2026-04-23 18:33:17');
-INSERT INTO `ai_conversations` VALUES ('35d7120046964bfc9787a5282a48b5ef', 1, '你好', 1, '2026-04-23 18:33:18', '2026-04-23 20:55:51');
-INSERT INTO `ai_conversations` VALUES ('50cad2351ed14a8db237c42eb11deced', 1, '昨天情况', 1, '2026-04-23 21:41:31', '2026-04-23 21:55:53');
-INSERT INTO `ai_conversations` VALUES ('5c24598e805349129814709eb69a66d8', 1, '最近一周的报警趋势', 0, '2026-04-23 21:55:57', '2026-04-23 21:55:57');
-INSERT INTO `ai_conversations` VALUES ('6b5538decbef4a2c9ac6ab6c3e8eb6a7', 1, '今日未处理数', 1, '2026-04-23 21:14:07', '2026-04-23 21:55:54');
-INSERT INTO `ai_conversations` VALUES ('94274cbfb4454ac69882c5b90351729b', 1, '你好', 1, '2026-04-23 18:28:08', '2026-04-23 18:31:05');
-INSERT INTO `ai_conversations` VALUES ('adbd51b360db459f8483711a0c7fd79c', 1, '你好', 1, '2026-04-23 20:08:36', '2026-04-23 20:55:47');
-INSERT INTO `ai_conversations` VALUES ('b3cfe450060b4d438de7de0285245791', 1, '你好', 1, '2026-04-23 18:05:41', '2026-04-23 18:21:41');
-INSERT INTO `ai_conversations` VALUES ('bf221b471d784aa9b6d37c7d67f6b85d', 1, '你好', 1, '2026-04-23 18:13:08', '2026-04-23 18:21:42');
-INSERT INTO `ai_conversations` VALUES ('c97998f7993b473b9cc06961eff02450', 1, '你好', 1, '2026-04-23 18:15:07', '2026-04-23 18:21:38');
-INSERT INTO `ai_conversations` VALUES ('eff358f2686b4554b64257e3704ea9f0', 1, '你好', 1, '2026-04-23 18:21:43', '2026-04-23 18:28:07');
 
 -- ----------------------------
 -- Table structure for alarms
@@ -99,12 +82,6 @@ CREATE TABLE `alarms`  (
 -- ----------------------------
 -- Records of alarms
 -- ----------------------------
-INSERT INTO `alarms` VALUES (295, 46, 'SMOKING', 0.76, '2026-03-04 21:47:02', 'static/evidence/alarm_cam46__p9_1772632022.mp4', 'static/evidence/snapshots/alarm_cam46__p9_1772632022.jpg', 1, 1, '2026-04-22 13:18:23', '');
-INSERT INTO `alarms` VALUES (296, 46, 'SMOKING', 0.71, '2026-03-04 22:09:59', 'static/evidence/alarm_cam46__p20_1772633399.mp4', 'static/evidence/snapshots/alarm_cam46__p20_1772633399.jpg', 1, 1, '2026-04-22 13:18:21', '');
-INSERT INTO `alarms` VALUES (297, 46, 'SMOKING', 0.72, '2026-03-04 22:25:11', 'static/evidence/alarm_cam46__p1_1772634310.mp4', 'static/evidence/snapshots/alarm_cam46__p1_1772634310.jpg', 1, 1, '2026-04-22 13:18:24', '');
-INSERT INTO `alarms` VALUES (298, 46, 'SMOKING', 0.72, '2026-04-22 13:17:33', 'static/evidence/alarm_cam46__p16_1776835052.mp4', 'static/evidence/snapshots/alarm_cam46__p16_1776835052.jpg', 1, 1, '2026-04-22 13:18:26', '');
-INSERT INTO `alarms` VALUES (299, 46, 'SMOKING', 0.71, '2026-04-22 13:23:06', 'static/evidence/alarm_cam46__p50_1776835386.mp4', 'static/evidence/snapshots/alarm_cam46__p50_1776835386.jpg', 0, NULL, NULL, NULL);
-INSERT INTO `alarms` VALUES (300, 47, 'SMOKING', 0.74, '2026-04-23 21:00:10', 'static/evidence/alarm_cam47__p1_1776949209.mp4', 'static/evidence/snapshots/alarm_cam47__p1_1776949209.jpg', 0, NULL, NULL, NULL);
 
 -- ----------------------------
 -- Table structure for devices
@@ -125,8 +102,6 @@ CREATE TABLE `devices`  (
 -- ----------------------------
 -- Records of devices
 -- ----------------------------
-INSERT INTO `devices` VALUES (46, '手机', 'rtsp://admin:admin@192.168.217.134:8554/live', NULL, '2026-03-04 21:46:26', '2026-04-22 13:23:55', 0, 0);
-INSERT INTO `devices` VALUES (47, '宿舍', 'rtsp://admin:admin@192.168.217.48:8554/live', NULL, '2026-04-23 20:59:47', '2026-04-23 22:09:54', 0, 0);
 
 -- ----------------------------
 -- Table structure for users
@@ -148,17 +123,6 @@ CREATE TABLE `users`  (
 -- ----------------------------
 -- Records of users
 -- ----------------------------
-INSERT INTO `users` VALUES (1, 'admin', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'admin', 1, '0:0:0:0:0:0:0:1', '2026-04-23 20:13:16', '2026-01-13 23:15:22');
-INSERT INTO `users` VALUES (2, 'user_01', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '0:0:0:0:0:0:0:1', '2026-04-23 20:12:11', '2026-01-14 16:51:01');
-INSERT INTO `users` VALUES (3, 'user_02', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (4, 'user_03', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (5, 'user_04', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (6, 'user_05', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (7, 'user_06', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (8, 'user_07', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (9, 'user_08', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (10, 'user_09', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
-INSERT INTO `users` VALUES (11, 'user_10', '$2a$10$51qmfkswHTqgnF3nMWgBiOeTcCmEsxN8Ub01P.q34GhMDvckUD6vW', 'user', 1, '127.0.0.1', '2026-02-02 15:54:31', '2026-02-02 15:54:31');
 
 -- ----------------------------
 -- View structure for ai_alarm_daily_stats_view
