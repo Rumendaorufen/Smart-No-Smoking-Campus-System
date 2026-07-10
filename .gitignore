@@ -116,3 +116,9 @@ web-flask/static/snapshots/*.png
 
 
 web-agent/env/
+
+# Design documents, development logs, reports (not pushed to GitHub)
+development log/
+docs/
+report/
+web-back/docs/
