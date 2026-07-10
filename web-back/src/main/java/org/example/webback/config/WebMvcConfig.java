@@ -62,6 +62,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/api/monitor/stream/**",
                         "/api/internal/**",
                         "/api/monitor/devices/sync-status",
+                        "/api/monitor/devices/batch-sync",
                         "/api/alerts/report",
                         "/api/logs/**"
                 );

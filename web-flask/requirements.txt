@@ -1,4 +1,22 @@
-# Note: MediaMTX (mediamtx.exe) is an external system dependency required at runtime.
-# Download the Windows binary from https://github.com/bluenviron/mediamtx/releases
-# and place mediamtx.exe in the web-flask/ directory alongside mediamtx.yml.
-# Start it via scripts/start_mediamtx.bat before launching the Flask app.
+# Web API
+Flask>=3.0,<4.0
+flask-cors>=4.0,<7.0
+requests>=2.31,<3.0
+
+# Computer vision and inference
+numpy>=1.26,<3.0
+opencv-python>=4.9,<5.0
+torch>=2.0,<3.0
+ultralytics>=8.2,<9.0
+
+# Logging, configuration and system metrics
+pymongo>=4.6,<5.0
+python-dotenv>=1.0,<2.0
+psutil>=5.9,<8.0
+
+# System dependencies are installed separately:
+# - FFmpeg is required to convert evidence recordings to browser-compatible H264.
+# - CUDA and a compatible NVIDIA driver are optional and enable GPU inference.
+# - ImDisk is optional; without R:\ the recorder falls back to SSD storage.
+# - MediaMTX configuration is retained for future use, but the current loader
+#   connects directly to RTSP streams through OpenCV/FFmpeg.
