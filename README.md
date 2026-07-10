@@ -430,23 +430,6 @@ npm run dev
 
 AI Agent 使用专用账号 `ai_reader`，仅拥有 4 个视图的 `SELECT` + `SHOW VIEW` 权限和 `ai_chat_history` 的 `SELECT/INSERT` 权限。即使 LLM 被诱导生成恶意 SQL，MySQL 引擎层也会直接拒绝。
 
-## 开发日志索引
-
-| 文档 | 内容 |
-|------|------|
-| [开发计划](development%20log/开发计划.md) | 初始 8 周开发计划、里程碑、风险评估 |
-| [抽烟监测优化](development%20log/抽烟监测优化.md) | 级联检测、Batch/FP16、全局单例、显存优化 |
-| [修改模型文档](development%20log/修改模型文档.md) | Pose+分类器 → 端到端双模型升级 (v2→v3.1) |
-| [人物锁定](development%20log/人物锁定.md) | 动态冷却圈：解决移动吸烟和 ID 跳变重复报警 |
-| [仲裁与抽烟记录设计](development%20log/仲裁于抽烟记录设计文档.md) | 报警状态机、审核系统、存储清理策略 |
-| [摄像头连接测试修复](development%20log/摄像头连接测试修复.md) | 智能握手、网络熔断、Pinia 状态防抖 |
-| [SpringBoot 迁移](development%20log/springboot迁移.md) | Java 中台集成：内部通道、状态同步、FFmpeg 死锁修复 |
-| [web-agent 安全加固](development%20log/web-agent%20测试与数据库权限加固.md) | 最小权限、视图隔离、三层防注入 |
-| [web-agent 流式输出](development%20log/web-agent流式输出.md) | SSE 断包/空格裁切/异步生命周期 排查与修复 |
-| [历史记录测试](development%20log/历史记录列表测试.md) | 对话记忆架构升级：手动注入法绕过 LangChain 黑盒 |
-| [200 路升级分析](development%20log/200路升级问题分析.md) | 11 个核心痛点分析及根因链路 |
-| [200 路升级记录](development%20log/200路升级记录-2026-06-10.md) | 三阶段升级方案、性能指标对比、运行时参数 |
-
 ## 开源协议
 
 本项目采用 MIT 许可证。
