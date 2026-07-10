@@ -109,30 +109,44 @@ class EvidenceRecorder:
         rec = self.recordings.pop(filename, None)
         if not rec:
             return
-        ram_path = rec['path']
+        source_path = rec['path']
         try:
             rec['writer'].release()
         except Exception as e:
             logger.error(f"释放录像 {filename} 异常: {e}")
             return
-        if ram_path and self.ram_disk_dir != self.save_dir and os.path.exists(ram_path):
-            ssd_path = self.move_to_persistent(ram_path)
-            h264_path = ssd_path.replace('.mp4', '_h264.mp4')
-            cmd = [
-                'ffmpeg', '-y', '-i', ssd_path,
-                '-c:v', 'libx264', '-preset', 'superfast',
-                '-pix_fmt', 'yuv420p',
-                '-c:a', 'none', h264_path
-            ]
-            try:
-                subprocess.run(cmd, timeout=30, capture_output=True)
+
+        # RAM 盘模式先迁移到 SSD；SSD 回退模式直接使用原文件。
+        final_path = source_path
+        if (source_path and self.ram_disk_dir != self.save_dir
+                and os.path.exists(source_path)):
+            final_path = self.move_to_persistent(source_path)
+
+        if not final_path or not os.path.exists(final_path):
+            logger.error(f"录像文件不存在，无法转码: {final_path}")
+            return
+
+        # 两种存储模式都统一转为浏览器兼容的 H264。
+        h264_path = final_path.replace('.mp4', '_h264.mp4')
+        cmd = [
+            'ffmpeg', '-y', '-i', final_path,
+            '-c:v', 'libx264', '-preset', 'superfast',
+            '-pix_fmt', 'yuv420p',
+            '-an', h264_path
+        ]
+        try:
+            result = subprocess.run(cmd, timeout=30, capture_output=True)
+            if result.returncode == 0 and os.path.exists(h264_path):
+                os.replace(h264_path, final_path)
+                logger.info(f"🎥 录像完成 (H264): {os.path.basename(final_path)}")
+            else:
                 if os.path.exists(h264_path):
-                    os.replace(h264_path, ssd_path)
-                    logger.info(f"🎥 录像完成 (H264): {os.path.basename(ssd_path)}")
-                else:
-                    logger.warning(f"H264 编码失败，保留原文件")
-            except Exception as e:
-                logger.error(f"FFmpeg 重编码异常: {e}")
+                    os.remove(h264_path)
+                logger.warning(f"H264 编码失败，保留原文件: {final_path}")
+        except Exception as e:
+            if os.path.exists(h264_path):
+                os.remove(h264_path)
+            logger.error(f"FFmpeg 重编码异常，保留原文件: {e}")
 
     def process_recording(self, frame=None):
         """由 Processor 线程定期调用，检查超时。"""
@@ -141,24 +155,6 @@ class EvidenceRecorder:
                        if time.time() - rec['start_time'] > rec['post_sec']]
         for name in expired:
             self._finalize_recording(name)
-            ssd_path = self.move_to_persistent(ram_path)
-            # 🚀 FFmpeg 重编码 mp4v → H264（浏览器可播放）
-            h264_path = ssd_path.replace('.mp4', '_h264.mp4')
-            cmd = [
-                'ffmpeg', '-y', '-i', ssd_path,
-                '-c:v', 'libx264', '-preset', 'superfast',
-                '-pix_fmt', 'yuv420p',
-                '-c:a', 'none', h264_path
-            ]
-            try:
-                subprocess.run(cmd, timeout=30, capture_output=True)
-                if os.path.exists(h264_path):
-                    os.replace(h264_path, ssd_path)
-                    logger.info(f"🎥 录像完成 (H264): {os.path.basename(ssd_path)}")
-                else:
-                    logger.warning(f"H264 编码失败，保留原文件")
-            except Exception as e:
-                logger.error(f"FFmpeg 重编码异常: {e}")
 
     def save_snapshot(self, frame, filename):
         if frame is None: return
